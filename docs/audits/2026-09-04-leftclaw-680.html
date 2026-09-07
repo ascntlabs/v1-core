@@ -1,0 +1,609 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ascnt (Uniswap v4 Divergence-Priced Fee Hooks) — LeftClaw Services</title>
+<meta name="description" content="Smart contract audit report for leftclaw.services job #680">
+<style>
+  :root {
+    --bg: #fffdf9;
+    --bg-soft: #fdf3e8;
+    --bg-softer: #f9e2c8;
+    --ink: #2c1408;
+    --ink-soft: #6b5648;
+    --primary: #c93a1e;
+    --rule: #ecd9c0;
+    --code-bg: #faf2e6;
+    --code-ink: #4a2c14;
+    --pill-critical-bg: #7a1010; --pill-critical-ink: #ffe3e3;
+    --pill-high-bg: #e03030;     --pill-high-ink: #ffffff;
+    --pill-medium-bg: #e8a020;   --pill-medium-ink: #2c1408;
+    --pill-low-bg: #4a90d9;      --pill-low-ink: #ffffff;
+    --pill-info-bg: #d8cbb8;     --pill-info-ink: #2c1408;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1e1410;
+      --bg-soft: #150e0a;
+      --bg-softer: #2a1c12;
+      --ink: #ffe8d8;
+      --ink-soft: #b89a86;
+      --primary: #e8431f;
+      --rule: #3d2a1c;
+      --code-bg: #150e0a;
+      --code-ink: #f4d9c2;
+      --pill-info-bg: #4a382a; --pill-info-ink: #ffe8d8;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-text-size-adjust: 100%;
+  }
+  a { color: var(--primary); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .band { height: 6px; background: var(--primary); }
+
+  .page { max-width: 880px; margin: 0 auto; padding: 0 24px 80px; }
+
+  /* ---------- masthead ---------- */
+  header.masthead { padding: 36px 0 24px; border-bottom: 2px solid var(--rule); }
+  .brand {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 14px; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--ink-soft); font-weight: 600;
+  }
+  .brand .claw { font-size: 20px; }
+  .brand a { color: inherit; }
+  header.masthead h1.doc-title {
+    margin: 14px 0 4px; font-size: 34px; line-height: 1.2; letter-spacing: -.01em;
+  }
+  .job-sub { color: var(--ink-soft); font-size: 15px; margin: 0 0 18px; }
+  .meta-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 13px; padding: 5px 12px; border-radius: 999px;
+    background: var(--bg-soft); border: 1px solid var(--rule); color: var(--ink);
+    white-space: nowrap;
+  }
+  .chip b { font-weight: 600; }
+  a.chip:hover { text-decoration: none; border-color: var(--primary); }
+
+  /* ---------- severity strip ---------- */
+  .sev-strip { display: flex; flex-wrap: wrap; gap: 10px; margin: 22px 0 0; }
+  .sev-card {
+    flex: 1 1 90px; min-width: 90px; text-align: center;
+    border: 1px solid var(--rule); border-radius: 8px; padding: 10px 6px 8px;
+    background: var(--bg-soft);
+  }
+  .sev-card .n { font-size: 26px; font-weight: 700; line-height: 1.1; }
+  .sev-card .l { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft); }
+  .sev-card.critical .n { color: var(--pill-critical-bg); }
+  .sev-card.high .n { color: var(--pill-high-bg); }
+  .sev-card.medium .n { color: var(--pill-medium-bg); }
+  .sev-card.low .n { color: var(--pill-low-bg); }
+  .sev-card.info .n { color: var(--ink-soft); }
+  @media (prefers-color-scheme: dark) {
+    .sev-card.critical .n { color: #ff8a8a; }
+  }
+
+  /* ---------- severity pills ---------- */
+  .pill {
+    display: inline-block; font-size: 12px; font-weight: 700; line-height: 1;
+    padding: 4px 10px; border-radius: 999px; letter-spacing: .04em;
+    text-transform: uppercase; vertical-align: baseline;
+  }
+  .pill.critical { background: var(--pill-critical-bg); color: var(--pill-critical-ink); }
+  .pill.high     { background: var(--pill-high-bg);     color: var(--pill-high-ink); }
+  .pill.medium   { background: var(--pill-medium-bg);   color: var(--pill-medium-ink); }
+  .pill.low      { background: var(--pill-low-bg);      color: var(--pill-low-ink); }
+  .pill.info     { background: var(--pill-info-bg);     color: var(--pill-info-ink); }
+
+  /* ---------- table of contents ---------- */
+  nav.toc {
+    margin: 28px 0 8px; padding: 18px 22px;
+    background: var(--bg-soft); border: 1px solid var(--rule); border-radius: 10px;
+  }
+  nav.toc .toc-title {
+    font-size: 12px; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--ink-soft); font-weight: 700; margin-bottom: 8px;
+  }
+  nav.toc .toc-cols { display: flex; gap: 36px; }
+  nav.toc ol { margin: 0; padding-left: 20px; flex: 1 1 0; }
+  nav.toc li { font-size: 14px; margin: 3px 0; }
+  @media (max-width: 640px) { nav.toc .toc-cols { flex-direction: column; gap: 0; } }
+
+  /* ---------- report body ---------- */
+  main.report { padding-top: 8px; }
+  main.report h1 { display: none; } /* masthead already shows the title */
+  main.report h2 {
+    font-size: 24px; line-height: 1.3; margin: 44px 0 14px;
+    padding-bottom: 8px; border-bottom: 2px solid var(--rule);
+    letter-spacing: -.01em;
+  }
+  main.report h3 { font-size: 19px; margin: 30px 0 10px; }
+  main.report h4 { font-size: 16px; margin: 24px 0 8px; }
+  main.report p { margin: 12px 0; }
+  main.report li { margin: 5px 0; }
+  main.report hr { border: none; border-top: 1px solid var(--rule); margin: 36px 0; }
+  main.report strong { font-weight: 650; }
+  main.report blockquote {
+    margin: 16px 0; padding: 10px 18px; border-left: 4px solid var(--primary);
+    background: var(--bg-soft); border-radius: 0 8px 8px 0; color: var(--ink-soft);
+  }
+
+  main.report code {
+    font: 13.5px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    background: var(--code-bg); color: var(--code-ink);
+    padding: 2px 6px; border-radius: 5px; border: 1px solid var(--rule);
+  }
+  main.report pre {
+    background: var(--code-bg); border: 1px solid var(--rule); border-radius: 10px;
+    padding: 16px 18px; overflow-x: auto; margin: 16px 0;
+  }
+  main.report pre code { background: none; border: none; padding: 0; color: var(--code-ink); }
+
+  .table-wrap { overflow-x: auto; margin: 16px 0; border: 1px solid var(--rule); border-radius: 10px; }
+  main.report table { border-collapse: collapse; width: 100%; font-size: 14.5px; }
+  main.report th, main.report td {
+    text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+  }
+  main.report thead th {
+    background: var(--bg-soft); font-size: 12px; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--ink-soft); border-bottom: 2px solid var(--rule);
+  }
+  main.report tbody tr:last-child td { border-bottom: none; }
+  main.report tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--bg-soft) 45%, transparent); }
+
+  /* ---------- footer ---------- */
+  footer.colophon {
+    margin-top: 64px; padding-top: 20px; border-top: 2px solid var(--rule);
+    font-size: 13.5px; color: var(--ink-soft);
+  }
+  footer.colophon p { margin: 6px 0; }
+  footer.colophon code { font-size: 12px; word-break: break-all; }
+
+  /* ---------- print ---------- */
+  @media print {
+    :root { --bg: #ffffff; --bg-soft: #f6f6f6; --rule: #dddddd; }
+    .band { display: none; }
+    .page { max-width: none; padding: 0; }
+    nav.toc ol { columns: 2; }
+    main.report pre, main.report .table-wrap { break-inside: avoid; }
+    main.report h2 { break-after: avoid; }
+    a { color: inherit; }
+  }
+</style>
+</head>
+<body>
+<div class="band"></div>
+<div class="page">
+
+  <header class="masthead">
+    <div class="brand">
+      <span class="claw">🦞</span>
+      <a href="https://leftclaw.services">LeftClaw Services</a>
+      <span>·</span>
+      <span>Smart Contract Audit</span>
+    </div>
+    <h1 class="doc-title">Ascnt (Uniswap v4 Divergence-Priced Fee Hooks)</h1>
+    <p class="job-sub">Job #680 · completed on-chain · report pinned to IPFS</p>
+    <div class="meta-chips">
+      <a class="chip" href="https://leftclaw.services/jobs/680"><b>Job page</b> #680</a>
+      <a class="chip" href="https://bafkreihxa2m5dkvxifferhwkipug65tvctwtwwnqdq76oh5bdhe5q36e6u.ipfs.community.bgipfs.com/"><b>Canonical report</b> IPFS</a>
+      <span class="chip"><b>Generated</b> 2026-09-04</span>
+    </div>
+    <div class="sev-strip">
+      <div class="sev-card high"><div class="n">3</div><div class="l">High</div></div>
+      <div class="sev-card medium"><div class="n">2</div><div class="l">Medium</div></div>
+      <div class="sev-card low"><div class="n">2</div><div class="l">Low</div></div>
+      <div class="sev-card info"><div class="n">6</div><div class="l">Info</div></div>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <div class="toc-title">Contents</div>
+    <div class="toc-cols">
+    <ol>
+      <li><a href="#access-control-inventory">Access-Control Inventory</a></li>
+      <li><a href="#threat-model">Threat Model</a></li>
+      <li><a href="#findings">Findings</a></li>
+    </ol>
+    <ol start="4">
+      <li><a href="#findings-list">Findings List</a></li>
+      <li><a href="#leads">Leads</a></li>
+    </ol>
+    </div>
+  </nav>
+
+  <main class="report">
+<h1>Security Audit — Ascnt (Uniswap v4 Divergence-Priced Fee Hooks)</h1>
+<p><strong>Repo:</strong> <a href="https://github.com/fm0909/divergent-pricing-hook">https://github.com/fm0909/divergent-pricing-hook</a><br><strong>Commit:</strong> <code>509cfb9a2793dec348cacd5cfddeb569c9d88628</code> (= tag <code>audit-2026-08-18</code>, <code>main</code> HEAD;<br>verified reachable via <code>git ls-remote</code>)<br><strong>Scope:</strong> per the repo&#39;s own README audit-scope table (1013 nSLOC) —<br><code>src/SimHook.sol</code>, <code>src/AscntBaseHook.sol</code>, <code>src/AscntGovernance.sol</code>, <code>src/HookFactory.sol</code>,<br><code>src/lib/SwapSimulator.sol</code>, <code>src/lib/HookMath.sol</code>, <code>src/lib/SafeCast.sol</code>. Out of scope per the<br>README: <code>script/utils/HookFlags.sol</code> (test-only), <code>test/</code>, <code>lib/</code> (vendored Uniswap v4-core/<br>v4-periphery/OpenZeppelin/forge-std).<br><strong>Methodology:</strong> three-phase audit — Phase 0 context (protocol map + access-control inventory +<br>threat catalog, no findings) → Phase 1 breadth (8 ethskills domain checklists) → Phase 2 depth<br>(12 pashov attack-specialist agents, run blind to Phase 1) → hybrid reconciliation with a<br>coverage gate. Full detail in this session&#39;s phase artifacts.</p>
+<p><strong>Model note:</strong> Phase 0 ran on opus per the methodology&#39;s fixed rule. Phases 1 and 2 were meant to<br>run on opus (scope = large, 1013 nSLOC). Opus was under a <strong>sustained platform-wide API overload</strong><br>(HTTP 529) for over an hour, confirmed via 5 full retry rounds across all 8 Phase-1 agents and a<br>direct diagnostic probe showing sonnet succeeded immediately while opus consistently failed both<br>solo and concurrently. To keep the engagement moving, Phases 1 and 2 ran on <strong>sonnet</strong> instead,<br>with agents instructed to compensate with extra thoroughness. This is flagged transparently; the<br>client may request an opus-run supplement if desired.</p>
+<p><strong>Prior work note:</strong> this exact repo/commit may have been submitted to this audit pipeline before.<br>Per this engagement&#39;s operating rules, every finding below comes from this job&#39;s own fresh<br>phase 0/1/2 agent runs — no prior report was read or reused.</p>
+<p><strong>Severity counts:</strong> 0 Critical · 3 High · 2 Medium · 2 Low · 6 Info = 13 findings, plus 8 Leads.</p>
+<p><strong>Reconciliation summary:</strong> Phase-1-only: 11 (1 High, 2 Medium, 2 Low, 6 Info) · Phase-2-only: 2<br>(both High) · Overlap: 0 (no group_key collided across phases — every phase-2 finding is on a<br>function/bug-class phase-1&#39;s checklist sweep didn&#39;t independently surface, and vice versa) ·<br>Re-examined leads kept: 2 (both High findings re-confirmed by direct source re-read during<br>reconciliation — see below), demoted: 0 · Coverage holes closed this pass: 0 (both phases already<br>covered the full access-control inventory and threat catalog between them; Turn-3 re-reads were<br>confirmatory, not first-time examination). Confidence floor used: findings with confidence ≥ 50<br>are reported as Findings; two Phase-2 threads that stayed below that bar across all 4 agents who<br>touched them are demoted to Leads.</p>
+<hr>
+<h2 id="access-control-inventory">Access-Control Inventory</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Entrypoint</th>
+<th>Guard</th>
+<th>Caller</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>AscntGovernance.setHookFactory</code></td>
+<td><code>onlyOwner</code>, one-shot</td>
+<td>owner</td>
+<td>Never rotatable (KI-12, accepted)</td>
+</tr>
+<tr>
+<td><code>AscntGovernance.setTreasury</code></td>
+<td><code>onlyTimelock</code></td>
+<td>timelock</td>
+<td>Coupled to <code>protocolFeeBps</code> both ways</td>
+</tr>
+<tr>
+<td><code>AscntGovernance.setProtocolFeeBps</code></td>
+<td><code>onlyTimelock</code>, ≤2000bps</td>
+<td>timelock</td>
+<td>Broadcasts to subscribers, see [pashov-lead] code-length asymmetry</td>
+</tr>
+<tr>
+<td><code>AscntGovernance.removeSubscriber</code></td>
+<td><code>onlyTimelock</code></td>
+<td>timelock</td>
+<td>Fail-safe pause on removal</td>
+</tr>
+<tr>
+<td><code>AscntGovernance.proposeTimelock</code> / <code>acceptTimelock</code></td>
+<td><code>onlyTimelock</code> / self-originated</td>
+<td>timelock / nominee</td>
+<td>Two-step, 30-day window</td>
+</tr>
+<tr>
+<td><code>AscntGovernance.cancelTimelockTransfer</code></td>
+<td><code>onlyTimelock</code></td>
+<td>timelock</td>
+<td></td>
+</tr>
+<tr>
+<td><code>AscntGovernance.setPoolDeployer</code></td>
+<td><code>onlyTimelock</code></td>
+<td>timelock</td>
+<td>No zero-check (disables role)</td>
+</tr>
+<tr>
+<td><code>AscntGovernance.transferOwnership</code></td>
+<td><code>onlyTimelock</code> (not <code>onlyOwner</code>)</td>
+<td>timelock</td>
+<td>One-step, deliberate recovery-lane design</td>
+</tr>
+<tr>
+<td><code>AscntGovernance.setPauser</code></td>
+<td><code>onlyOwner</code></td>
+<td>owner</td>
+<td></td>
+</tr>
+<tr>
+<td><code>AscntGovernance.setAddLiquidityPaused</code> / <code>setHookAddLiquidityPaused</code></td>
+<td>owner ∥ pauser</td>
+<td>either</td>
+<td>OR-composed, no gap</td>
+</tr>
+<tr>
+<td><code>HookFactory.deployHook</code></td>
+<td><code>onlyOwner</code></td>
+<td>owner</td>
+<td><strong>[access-control-1, High]</strong> unbounded impact, no timelock</td>
+</tr>
+<tr>
+<td><code>HookFactory.setHookDeprecated</code></td>
+<td><code>onlyOwner</code></td>
+<td>owner</td>
+<td>Advisory only (KI-5)</td>
+</tr>
+<tr>
+<td><code>AscntGovernance.registerSubscriber</code></td>
+<td><code>onlyHookFactory</code></td>
+<td>factory only</td>
+<td></td>
+</tr>
+<tr>
+<td><code>SimHook.configurePool</code></td>
+<td><code>onlyOwnerOrPoolDeployer</code>, one-shot</td>
+<td>owner/poolDeployer</td>
+<td><strong>[chain-specific-1, Medium]</strong> block-time calibration</td>
+</tr>
+<tr>
+<td><code>_beforeSwap</code>/<code>_afterSwap</code></td>
+<td><code>onlyPoolManager</code> only</td>
+<td>any swapper</td>
+<td><strong>[pashov-1, High]</strong>; <strong>[dos-1, Medium]</strong></td>
+</tr>
+<tr>
+<td><code>_afterAddLiquidity</code>/<code>_beforeRemoveLiquidity</code> (JIT lock)</td>
+<td><code>onlyPoolManager</code> + lock (removal only)</td>
+<td>any LP</td>
+<td><strong>[pashov-2, High]</strong> poke bypass</td>
+</tr>
+<tr>
+<td><code>syncProtocolFee</code></td>
+<td>none (permissionless)</td>
+<td>anyone</td>
+<td>Converges to correct value only — examined, no issue</td>
+</tr>
+<tr>
+<td><code>onProtocolFeeBpsUpdated</code></td>
+<td><code>msg.sender == governance</code></td>
+<td>governance only</td>
+<td><strong>[general-1, Info]</strong></td>
+</tr>
+</tbody></table></div>
+<hr>
+<h2 id="threat-model">Threat Model</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Actor</th>
+<th>Reaches</th>
+<th>Invariant / Resolution</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Any swapper</td>
+<td><code>_beforeSwap</code>/<code>_afterSwap</code>, shared fee accumulator</td>
+<td><strong>Addressed by [pashov-1]</strong> — accumulator can be manufactured cheaply via a zero-liquidity gap-walk, closing KI-6&#39;s stated open lead</td>
+</tr>
+<tr>
+<td>Any LP</td>
+<td>JIT lock (<code>_afterAddLiquidity</code>/<code>_beforeRemoveLiquidity</code>)</td>
+<td><strong>Addressed by [pashov-2]</strong> — fee-only poke bypasses the lock entirely; position-key spoofing itself ruled out (invariant holds)</td>
+</tr>
+<tr>
+<td>Any address</td>
+<td><code>syncProtocolFee()</code></td>
+<td>Invariant holds — converges only to <code>isSubscribedHook ? protocolFeeBps : 0</code>, no attacker-chosen value reachable</td>
+</tr>
+<tr>
+<td>Malicious subscribed hook</td>
+<td>3 differently-guarded push sites</td>
+<td>Invariant holds — fault-isolated by design; asymmetries traced to provably dead code today (Leads)</td>
+</tr>
+<tr>
+<td>Hostile pool token / treasury</td>
+<td><code>poolManager.take</code> fallback (sole reentrancy point)</td>
+<td>Invariant holds — all state writes precede the untrusted call (KI-4 gas-burn case already accepted)</td>
+</tr>
+<tr>
+<td>owner</td>
+<td><code>deployHook</code> (arbitrary code), <code>configurePool</code>, pause levers</td>
+<td><strong>Addressed by [access-control-1]</strong> — <code>deployHook</code>&#39;s blast radius is unbounded and timelock-unreachable, unlike every other owner/timelock lever</td>
+</tr>
+<tr>
+<td>timelock</td>
+<td>fee/treasury/subscriber/role levers</td>
+<td>Invariant holds — all bounded (<code>MAX_PROTOCOL_FEE_BPS</code>), correctly coupled</td>
+</tr>
+<tr>
+<td>Nominated-but-unaccepted timelock</td>
+<td>none until self-origination</td>
+<td>Invariant holds — two-step handshake proves controllability</td>
+</tr>
+<tr>
+<td>Anyone computing CREATE2 address</td>
+<td><code>HookFactory.deployHook</code> assertions</td>
+<td>Invariant holds on standard EVM; <strong>[chain-specific-3, Info]</strong> on zkSync-family chains</td>
+</tr>
+</tbody></table></div>
+<p><strong>Coverage:</strong> 18 privileged/value-moving entrypoints in the inventory, 18 addressed (finding or<br>&quot;examined, no issue&quot;). 9 threat-catalog rows, 9 answered. Holes closed this pass: 0.</p>
+<hr>
+<h2 id="findings">Findings</h2>
+<p>[80] <strong>1. HookFactory.deployHook grants instant, unbounded, timelock-unreachable damage on owner compromise</strong></p>
+<p><code>HookFactory.deployHook</code> · Confidence: 80 · <strong>Severity:</strong> <span class="pill high">High</span> · Origin: [phase1: access-control]</p>
+<p><strong>Description</strong><br><code>deployHook</code> is <code>onlyOwner</code>, carries no timelock delay, and accepts arbitrary attacker-supplied<br><code>initCode</code> — unlike every other owner-reachable lever (all capped and/or timelocked), a malicious<br>hook it deploys can set permission bits <code>SimHook</code> deliberately never sets (e.g.<br><code>afterRemoveLiquidityReturnDelta</code>) and divert funds directly; the only content check (a reverse<br><code>governance()</code> pointer read) is trivially satisfied by the attacker&#39;s own constructor, and once<br>verified, <code>isCanonicalHook()</code> — the documented authoritative integrator check — returns <code>true</code><br>before any ≥24h timelock notice period could matter.</p>
+<p><strong>Proof of Concept</strong><br>Compromise owner → craft <code>EvilHook</code> whose constructor stores the real governance address (the<br>only check <code>deployHook</code> performs) but whose swap/liquidity callbacks are fully attacker-authored<br>→ <code>deployHook</code> succeeds in one tx (<code>isVerifiedHook=true</code>, subscribed) → <code>configurePool</code>/pool-init<br>(also instant, no timelock) puts a live pool behind it in the same or next tx → LPs/swappers<br>trusting <code>isCanonicalHook()==true</code> interact and lose funds → by the time a timelock rotation could<br>respond (≥24h), funds already in motion are gone; KI-5 (no kill switch) and<br><code>removeSubscriber</code>&#39;s deposit-only quarantine don&#39;t reach funds already interacting with the<br>malicious hook.</p>
+<p><strong>Fix</strong></p>
+<pre><code class="language-diff">- function deployHook(bytes calldata initCode, bytes32 salt, address expectedAddress)
+-     external
+-     onlyOwner
++ function deployHook(bytes calldata initCode, bytes32 salt, address expectedAddress)
++     external
++     onlyTimelockScheduled  // or: require a mandatory cooling-off window between
++                            // isVerifiedHook being set and pool-init eligibility
+</code></pre>
+<p>At minimum, document this asymmetry explicitly in <code>docs/known-issues.md</code> — it is not currently<br>covered, unlike every other owner-lever&#39;s blast radius.</p>
+<hr>
+<p>[82] <strong>2. JIT lock&#39;s fee-only &quot;poke&quot; path is unguarded — defeats the lock&#39;s entire documented anti-sandwich purpose</strong></p>
+<p><code>SimHook._beforeRemoveLiquidity</code> · Confidence: 82 · <strong>Severity:</strong> <span class="pill high">High</span> · Origin: [phase2: pashov agent 11 — trust-gap]</p>
+<p><strong>Description</strong><br>The JIT lock — the sole gate on liquidity removal — only checks <code>params.liquidityDelta &lt; 0</code>;<br>a fee-only &quot;poke&quot; (<code>liquidityDelta == 0</code>, standard Uniswap v3/v4 mechanic that settles accrued<br>fees without touching principal) routes past the check entirely and is never gated, letting a<br>JIT sandwicher extract the trade&#39;s fee payoff — the entire economic point of the sandwich —<br>immediately, with zero holding-period risk, while their untouched principal keeps earning<br>further yield.</p>
+<p><strong>Proof of Concept</strong><br>Attacker adds narrow, concentrated liquidity immediately ahead of a large incoming trade →<br><code>_afterAddLiquidity</code> stamps <code>lastAddedLiquidityBlock</code> → the large trade executes against the<br>attacker&#39;s concentrated range, generating an outsized LP-fee share → attacker calls<br><code>modifyLiquidity(liquidityDelta=0, same position key)</code> → <code>_beforeRemoveLiquidity</code>&#39;s<br><code>if (params.liquidityDelta &lt; 0)</code> is false → function returns immediately, no lock check runs →<br>v4-core settles the accrued fee to the attacker in the same/next transaction, fully inside the<br>configured <code>jitLockBlocks</code> window. Confirmed against the repo&#39;s own<br><code>test/feature/JitLock.t.sol::test_poke_doesNotResetClock</code>, which exercises exactly this call<br>shape and asserts it does <strong>not</strong> revert — the test checks only that the clock isn&#39;t reset, never<br>that the fee payout is blocked.</p>
+<p><strong>Fix</strong></p>
+<pre><code class="language-diff">- if (params.liquidityDelta &lt; 0) {
++ if (params.liquidityDelta &lt;= 0) {
+      PoolId poolId = key.toId();
+      uint48 lockBlocks = poolConfig[poolId].jitLockBlocks;
+      ...
+</code></pre>
+<p>(Alternative: track a separate &quot;fees claimable&quot; checkpoint distinct from principal-removal<br>eligibility, if blocking routine fee compounding for genuine LPs for the whole lock window is<br>judged too costly.)</p>
+<hr>
+<p>[80] <strong>3. Zero-liquidity gap-walk lets a positioned LP manufacture fee-accumulator saturation — closes a client-flagged open lead</strong></p>
+<p><code>SimHook._afterSwap</code> / <code>calculateDynamicFee</code> · Confidence: 80 · <strong>Severity:</strong> <span class="pill high">High</span> ·<br>Origin: [phase2: pashov agents 3 &amp; 12 (economic-security, flow-gap) — independently converged;<br>corroborated by agents 4 &amp; 5 as unclosed leads]</p>
+<p><strong>Description</strong><br>A dominant/concentrated LP can walk price through a zero-liquidity gap (a property of any<br>concentrated-liquidity pool) for near-zero real cost — v4-core consumes no input while<br><code>liquidity==0</code>. The resulting <code>swapDelta</code> is nonzero, so <code>_afterSwap</code>&#39;s exact-zero guard doesn&#39;t<br>fire, and the full traversal is booked as impact, saturating <code>cumPriceImpact</code>. Every subsequent<br>organic swap, either direction, then clamps to <code>maxFee</code> — an order-of-magnitude-plus overcharge<br>versus what its real (small) impact would justify — and the attacker, as dominant in-range LP,<br>collects the LP share of that inflated fee. <code>docs/known-issues.md</code> KI-6 explicitly leaves this<br>&quot;dominant-LP recapture&quot; variant as &quot;an open lead, not closed here&quot;; this finding closes it with a<br>concrete, cheap trigger at ordinary (non-100%) <code>maxFee</code> settings.</p>
+<p><strong>Proof of Concept</strong><br>At <code>maxFee=30,000</code> pips (3%), shipped-default weights <code>kPips=2e6</code>/<code>cPips=1e6</code>: one saturating<br>swap pushes <code>|cum|≈1,000,000</code>, clearing both of KI-11&#39;s own derived clamp thresholds (<code>15,000</code><br>imbalancing / <code>60,000</code> healing) by 17–67×. A subsequent organic swap with genuinely small impact<br>(~100 pips) computes <code>dynamicImpactFee≈2,000,100 pips (200%)</code>, clamped to the 3% ceiling.</p>
+<p><strong>Fix</strong><br>Distinguish &quot;impact through real liquidity&quot; from &quot;impact through an empty gap&quot; when booking<br><code>cumPriceImpact</code> (e.g. measure impact only over the sub-path where nonzero liquidity was actually<br>consumed), or dampen the accumulator&#39;s sensitivity to near-zero-liquidity traversals. At minimum,<br>elevate KI-6&#39;s open lead to a quantified, monitored risk with explicit <code>maxFee</code>-sizing guidance<br>for deployers.</p>
+<hr>
+<p>[70] <strong>4. <code>SwapSimulator</code>&#39;s fee-free replay walks empty tick-bitmap words the real swap never visits — refutes part of KI-2&#39;s stated reasoning</strong></p>
+<p><code>SwapSimulator._simulate</code> · Confidence: 70 · <strong>Severity:</strong> <span class="pill medium">Medium</span> · Origin: [phase1: dos]</p>
+<p><strong>Description</strong><br>KI-2 accepts the simulator&#39;s double tick-walk on the premise &quot;vanilla v4 walks the same ticks for<br>the same order&quot; — true outside KI-1&#39;s overquote window, false inside it: a fee-free simulation of<br>an exact-input order sized at the real book&#39;s capacity exhausts the liquid band using less<br>notional than the real (fee-charged) swap, so it exits into empty tick-space and scans additional<br>cold <code>getTickBitmap</code> words the real swap never pays for.</p>
+<p><strong>Proof of Concept</strong><br>At <code>tickSpacing=1</code> with a loose price limit, up to ~3,466 extra words toward <code>MIN_TICK</code> ≈ 13.9M<br>gas the real swap/vanilla-v4 never incurs — potentially pushing total tx gas toward block limits<br>for an order that would otherwise execute cheaply.</p>
+<p><strong>Fix</strong><br>Short-circuit <code>_simulate</code> once it detects zero-liquidity consumption outside the real book and<br>treat the remainder as saturated (100%) impact directly, matching the <code>maxFee</code> outcome KI-1<br>already assigns to this order class.</p>
+<hr>
+<p>[70] <strong>5. <code>MAX_JIT_LOCK_BLOCKS</code>/<code>jitLockBlocks</code> calibrated for 12s blocks, shrinks ~6× on 2s-block L2s</strong></p>
+<p><code>SimHook.sol</code> (<code>MAX_JIT_LOCK_BLOCKS</code>, <code>_beforeRemoveLiquidity</code>, <code>_afterAddLiquidity</code>) ·<br>Confidence: 70 · <strong>Severity:</strong> <span class="pill medium">Medium</span> · Origin: [phase1: chain-specific]</p>
+<p><strong>Description</strong><br>The JIT lock is <code>block.number</code>-denominated, and both the ceiling&#39;s NatSpec and deployer guidance<br>reason exclusively in mainnet-block terms (&quot;≈7 days of 12s blocks&quot;). On Base/Optimism (~2s<br>blocks), following that guidance literally yields a wall-clock lock ~6× shorter than intended,<br>narrowing the deterrent window against JIT liquidity sniping — compounding with Finding 2 above on<br>any L2 deployment, since the poke bypass makes the lock&#39;s actual protection even thinner than the<br>timing miscalibration alone suggests.</p>
+<p><strong>Fix</strong><br>Switch the JIT-lock clock to <code>block.timestamp</code> (as the ramp/decay clocks already use), or require<br>an explicit per-chain block-time parameter when deriving <code>jitLockBlocks</code>.</p>
+<hr>
+<p>[65] <strong>6. <code>setProtocolFeeBps</code> broadcast loop has adequate but not generous gas margin, no chunking fallback</strong></p>
+<p><code>AscntGovernance.setProtocolFeeBps</code> · Confidence: 65 · <strong>Severity:</strong> <span class="pill low">Low</span> · Origin: [phase1: dos]</p>
+<p><strong>Description</strong><br>Worst case ≈14.2M gas fits current mainnet block limits but has no chunking fallback; on L2s with<br>lower per-block gas limits this could exceed the limit, blocking <code>setProtocolFeeBps</code> until<br>subscribers are pruned one at a time. Requires 256 adversarial subscribers (compromised owner<br>precondition) — not externally triggerable today.</p>
+<p><strong>Fix</strong><br>Add a paginated broadcast variant (caller-supplied <code>[start, end)</code> slice), or document a minimum<br>acceptable block gas limit per deployment target.</p>
+<hr>
+<p>[60] <strong>7. KI-8&#39;s stated &quot;~13 blocks of exposure&quot; mitigation narrows proportionally on faster L2s</strong></p>
+<p><code>SimHook._beforeSwap</code> (ramp-anchor settle) · Confidence: 60 · <strong>Severity:</strong> <span class="pill low">Low</span> ·<br>Origin: [phase1: chain-specific]</p>
+<p><strong>Description</strong><br>KI-8 accepts min-fee-floor grinding partly because ~13 blocks (≈156s at mainnet cadence) gives<br>competing arbitrageurs time to snipe the setup first. On 2s-block L2s the same grind completes in<br>~26s — a 6× reduction in reaction time. Doesn&#39;t unlock new value (KI-8 already bounds the payoff<br>as small); narrows only the stated reaction-time cushion.</p>
+<p><strong>Fix</strong><br>Re-derive KI-8&#39;s exposure-window reasoning per target chain&#39;s block time in the deployment runbook.</p>
+<hr>
+<p>[55] <strong>8. <code>PUSH_GAS_STIPEND</code> fixed constant has no forward-compat margin for gas repricing</strong></p>
+<p><code>AscntGovernance.sol:113,270,310</code> · Confidence: 55 · <strong>Severity:</strong> <span class="pill info">Info</span> · Origin: [phase1: general]</p>
+<p>Fully self-healing via permissionless <code>syncProtocolFee()</code>. No exploit path today; a future<br>opcode-repricing hard fork could increase missed-push frequency, harmlessly.</p>
+<hr>
+<p>[55] <strong>9. <code>decayCumByTime</code> loses precision through an avoidable two-step rounding chain</strong></p>
+<p><code>HookMath.sol:86-104</code> · Confidence: 55 · <strong>Severity:</strong> <span class="pill info">Info</span> · Origin: [phase1: precision-math]</p>
+<p>Two sequential floor-<code>mulDiv</code>s instead of one; directionally consistent with invariant #7,<br>unforced extra precision loss, negligible magnitude, benefits swappers. Replace with a single<br><code>FullMath.mulDiv(absCumValue, timeLeft, timeDecayLength)</code> call — more precise and cheaper.</p>
+<hr>
+<p>[55] <strong>10. <code>_computeProtocolFeeSplit</code>&#39;s pip-level floor forfeits sub-pip protocol fee to LPs</strong></p>
+<p><code>AscntBaseHook.sol:185-203</code> · Confidence: 55 · <strong>Severity:</strong> <span class="pill info">Info</span> · Origin: [phase1: precision-math]</p>
+<p>Distinct rounding step from KI-3 (token-amount rounding at settlement); here the forfeited dust<br>goes to LPs, not the swapper, contradicting KI-3&#39;s literal &quot;LPs are unaffected&quot; for this specific<br>mechanism. Magnitude bounded under 1 pip/swap.</p>
+<hr>
+<p>[50] <strong>11. <code>HookFactory</code>&#39;s CREATE2 self-verification assumes standard-EVM address derivation, incompatible with zkSync Era</strong></p>
+<p><code>HookFactory.sol:67-69,82-97</code> · Confidence: 50 · <strong>Severity:</strong> <span class="pill info">Info</span> · Origin: [phase1: chain-specific]</p>
+<p>Fails safe (deterministic revert, no state change) on zkSync-family chains — a deployment<br>blocker, not an exploitable bug, if such chains are ever in the target list.</p>
+<hr>
+<p>[50] <strong>12. Cancun/EIP-1153 support not verified per target L2 despite being &quot;load-bearing&quot;</strong></p>
+<p><code>foundry.toml</code>, <code>AscntBaseHook.sol:266-281</code> · Confidence: 50 · <strong>Severity:</strong> <span class="pill info">Info</span> ·<br>Origin: [phase1: chain-specific]</p>
+<p>No fallback if <code>tstore</code>/<code>tload</code> are unavailable on a target chain; fails total and visible (every<br>swap reverts) rather than silently.</p>
+<hr>
+<p>[50] <strong>13. No chain-specific entries in the accepted-risk register despite stated multi-chain deployment plan</strong></p>
+<p><code>docs/known-issues.md</code>, <code>README.md</code> audit-scope table · Confidence: 50 · <strong>Severity:</strong> <span class="pill info">Info</span> ·<br>Origin: [phase1: chain-specific]</p>
+<p>Structural documentation gap: all 14 KI entries reason mainnet-only; the README&#39;s own scope table<br>names only &quot;Ethereum mainnet,&quot; inconsistent with the client&#39;s stated deployment plan across L2s.<br>Findings 5 and 7 above show mainnet-calibrated reasoning doesn&#39;t automatically carry over.</p>
+<hr>
+<h2 id="findings-list">Findings List</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>#</th>
+<th>Confidence</th>
+<th>Severity</th>
+<th>Title</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1</td>
+<td>[80]</td>
+<td><span class="pill high">High</span></td>
+<td><code>HookFactory.deployHook</code> unbounded, timelock-unreachable damage on owner compromise</td>
+</tr>
+<tr>
+<td>2</td>
+<td>[82]</td>
+<td><span class="pill high">High</span></td>
+<td>JIT lock&#39;s fee-only poke path is unguarded</td>
+</tr>
+<tr>
+<td>3</td>
+<td>[80]</td>
+<td><span class="pill high">High</span></td>
+<td>Zero-liquidity gap-walk fee-accumulator manipulation (closes KI-6 open lead)</td>
+</tr>
+<tr>
+<td>4</td>
+<td>[70]</td>
+<td><span class="pill medium">Medium</span></td>
+<td><code>SwapSimulator</code> walks empty tick-bitmap words beyond the real swap (refutes part of KI-2)</td>
+</tr>
+<tr>
+<td>5</td>
+<td>[70]</td>
+<td><span class="pill medium">Medium</span></td>
+<td><code>MAX_JIT_LOCK_BLOCKS</code> calibrated for 12s blocks, shrinks ~6× on 2s-block L2s</td>
+</tr>
+<tr>
+<td>6</td>
+<td>[65]</td>
+<td><span class="pill low">Low</span></td>
+<td><code>setProtocolFeeBps</code> broadcast loop gas margin / no chunking</td>
+</tr>
+<tr>
+<td>7</td>
+<td>[60]</td>
+<td><span class="pill low">Low</span></td>
+<td>KI-8&#39;s exposure-window mitigation narrows on faster L2s</td>
+</tr>
+<tr>
+<td>8</td>
+<td>[55]</td>
+<td><span class="pill info">Info</span></td>
+<td><code>PUSH_GAS_STIPEND</code> forward-compat margin</td>
+</tr>
+<tr>
+<td>9</td>
+<td>[55]</td>
+<td><span class="pill info">Info</span></td>
+<td><code>decayCumByTime</code> avoidable double-rounding</td>
+</tr>
+<tr>
+<td>10</td>
+<td>[55]</td>
+<td><span class="pill info">Info</span></td>
+<td>Protocol-fee pip-level floor forfeits dust to LPs</td>
+</tr>
+<tr>
+<td>11</td>
+<td>[50]</td>
+<td><span class="pill info">Info</span></td>
+<td><code>HookFactory</code> CREATE2 derivation incompatible with zkSync Era</td>
+</tr>
+<tr>
+<td>12</td>
+<td>[50]</td>
+<td><span class="pill info">Info</span></td>
+<td>Cancun/EIP-1153 support unverified per target L2</td>
+</tr>
+<tr>
+<td>13</td>
+<td>[50]</td>
+<td><span class="pill info">Info</span></td>
+<td>No chain-specific entries in the accepted-risk register</td>
+</tr>
+</tbody></table></div>
+<hr>
+<h2 id="leads">Leads</h2>
+<p><em>Vulnerability trails with concrete code smells where the full exploit path could not be<br>completed in one analysis pass. Not false positives — high-signal leads for manual review, drawn<br>from Phase 2&#39;s 12 attack agents. Not scored.</em></p>
+<ul>
+<li><strong>Unverified inherited <code>onlyPoolManager</code> guard</strong> — <code>AscntBaseHook</code>/<code>SimHook</code> swap/liquidity<br>callbacks — Code smells: the actual access gate on every value-moving callback is inherited<br>from <code>v4-periphery</code>&#39;s <code>BaseHook</code>, not re-implemented in scope, and the submodule isn&#39;t checked<br>out in this clone — rests on test-assertion evidence rather than independently re-read source.</li>
+<li><strong>Unverified <code>SwapSimulator</code>↔v4-core <code>Pool.swap</code> tick-traversal correspondence</strong> — Code smells:<br>required by the code&#39;s own NatSpec to bytewise-mirror a BUSL-1.1 file this environment cannot<br>read; a divergence would silently misprice fees rather than revert. Raised independently by 3<br>of 12 agents.</li>
+<li><strong>Dual ramp-anchor/decay clocks sharing one <code>timeDecayLength</code></strong> — <code>SimHook._beforeSwap</code> —<br>Code smells: the damped min-fee floor and the undamped accumulator decay move independently;<br>traced without finding amplification beyond what KI-7/KI-8 individually concede, but not closed<br>with a full numeric bound across arbitrary swap sequences.</li>
+<li><strong><code>AscntGovernance.isCanonicalHook</code>/<code>isCanonicalHookDeprecated</code> lack the guard their sibling<br>self-attest views require</strong> — Code smells: no try/catch or code-length check for the identical<br>failure mode <code>AscntBaseHook.isVerified</code>/<code>isDeprecated</code> defends against; no live state was<br>constructed where this actually fires.</li>
+<li><strong><code>CurrencySettler</code> (ERC-6909 claims fallback) is imported from a <code>test/</code> path in upstream<br>v4-core</strong> — <code>AscntBaseHook._takeProtocolFeeOnAfterSwap</code> — Code smells: the entire<br>&quot;hostile token/treasury can&#39;t brick swaps&quot; guarantee depends on exact behavior from a<br>test-utility file, not independently re-read.</li>
+<li><strong><code>setProtocolFeeBps</code>&#39;s broadcast push omits the code-length check <code>removeSubscriber</code>&#39;s<br>equivalent push has</strong> — Code smells: asymmetric guard policy across the two push sites; traced<br>every path that could zero a subscribed hook&#39;s code post-registration and found none reachable<br>under Cancun/EIP-6780 — provably dead code today, live only on a pre-Cancun retarget.</li>
+<li><strong>Fee-basis compounding scales continuously with realized <code>dynamicFee</code>, not only at the<br><code>maxFee=100%</code> extreme KI-13&#39;s prose emphasizes</strong> — <code>AscntBaseHook._computeProtocolFeeSplit</code>/<br><code>_takeProtocolFeeOnAfterSwap</code> — Code smells: re-derivation shows a ~1.6–3.2%-of-the-fee<br>compounding overcharge at realistic (10–20%) <code>maxFee</code> settings. Documentation-accuracy<br>refinement, not a new fund-safety issue.</li>
+<li><strong><code>configurePool</code> deliberately doesn&#39;t enforce <code>cPips ≤ kPips</code>, and <code>poolDeployer</code> shares this<br>entrypoint&#39;s authority</strong> — Code smells: a semi-trusted, non-owner role could steer a pool to<br>structurally overcharge corrective flow, compounding with Finding 2. Not independently verified<br>as exploitable beyond the documented deployer-choice tradeoff already acknowledged in-repo.</li>
+</ul>
+<hr>
+<blockquote>
+<p>⚠️ This review combined checklist-driven breadth (8 domains) with blind attacker-mindset depth<br>(12 independent specialist agents), reconciled with a coverage gate against a pre-built<br>access-control inventory and threat catalog. AI analysis can never verify the complete absence<br>of vulnerabilities and no guarantee of security is given. This is an unusually well-hardened,<br>extensively self-audited codebase (14 documented accepted-risk entries, 28 invariants, 602<br>tests) — the majority of findings above either refine or close leads the client&#39;s own<br><code>docs/known-issues.md</code> had already flagged as open or under-specified, rather than surfacing<br>wholly novel classes of bug. Team security review, a live bug bounty, and on-chain monitoring<br>are strongly recommended, particularly around Findings 1–3 before mainnet/multi-chain launch.</p>
+</blockquote>
+
+  </main>
+
+  <footer class="colophon">
+    <p><strong>Canonical copy:</strong> this is a styled rendering of the immutable report delivered on IPFS —
+       <a href="https://bafkreihxa2m5dkvxifferhwkipug65tvctwtwwnqdq76oh5bdhe5q36e6u.ipfs.community.bgipfs.com/"><code>https://bafkreihxa2m5dkvxifferhwkipug65tvctwtwwnqdq76oh5bdhe5q36e6u.ipfs.community.bgipfs.com/</code></a>.
+       If the two ever differ, the IPFS copy is authoritative.</p>
+    <p>Audited by <a href="https://leftclaw.services">LeftClaw Services</a> 🦞 — job
+       <a href="https://leftclaw.services/jobs/680">#680</a> on Base. Rendered 2026-09-04.</p>
+  </footer>
+
+</div>
+</body>
+</html>

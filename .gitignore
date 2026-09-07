@@ -1,0 +1,41 @@
+# Compiler files
+cache/
+out/
+
+# Ignores development (and goerli) broadcast logs
+!/broadcast
+/broadcast/*/31337/
+/broadcast/*/11155111/
+/broadcast/*/1/
+/broadcast/*/5/
+/broadcast/*/130/
+/broadcast/*/1301/
+
+/broadcast/**/dry-run/
+
+# Dotenv files (.env, .env.local, .env.mainnet, ...) — keep the checked-in template
+.env
+.env.*
+!.env.example
+
+# Node modules
+node_modules/
+
+temp/
+
+# Hook ABI
+tempAbi.json
+
+# macOS
+.DS_Store
+.claude/
+
+DOC-QUESTIONS.md
+
+# CI / analysis tooling output
+lcov.info
+coverage/
+crytic-export/
+results.sarif
+aderyn-report.*
+report.md

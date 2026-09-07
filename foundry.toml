@@ -1,0 +1,82 @@
+[profile.default]
+bytecode_hash = "none"
+evm_version = "cancun"
+libs = ["lib"]
+out = "out"
+remappings = [
+    "forge-std/=lib/forge-std/src/",
+    "@uniswap/v4-core/=lib/uniswap-hooks/lib/v4-core/",
+    "@uniswap/v4-periphery/=lib/uniswap-hooks/lib/v4-periphery/",
+    "v4-core/=lib/uniswap-hooks/lib/v4-core/",
+    "v4-periphery/=lib/uniswap-hooks/lib/v4-periphery/",
+    "@openzeppelin/uniswap-hooks/=lib/uniswap-hooks/",
+    "@openzeppelin/contracts/=lib/uniswap-hooks/lib/openzeppelin-contracts/contracts/",
+    "hookmate/=lib/hookmate/src/",
+    "permit2/=lib/uniswap-hooks/lib/v4-periphery/lib/permit2/",
+    "solmate/=lib/uniswap-hooks/lib/v4-core/lib/solmate/",
+]
+solc_version = "0.8.26"
+src = "src"
+via_ir = true
+optimizer = true
+optimizer_runs = 200
+# CI turns warnings into build errors (FOUNDRY_DENY=warnings in the workflow env); local builds
+# stay lenient. Our tree compiles clean; submodules are exempt because we can't fix them here.
+ignored_warnings_from = ["lib"]
+
+# NOTE on compile time: `via_ir = true` is non-negotiable — SimHook._beforeSwap has
+# too many live locals for the legacy pipeline (stack-too-deep at the calculateDynamicFee
+# call). A `[profile.dev]` with via_ir=false was attempted and failed to compile.
+#
+# `optimizer = true` is EXPLICIT because Foundry 1.x defaults it to false — without it,
+# deploys/gas snapshots silently use unoptimized via-IR bytecode. Deploys, verification,
+# audits, and gas snapshots must use this default profile.
+
+# The PR gate runs on this profile. 256 is forge's own default, written out so a change is
+# deliberate. Per-test `/// forge-config: default.fuzz.runs = N` lines cap the slow
+# differential/simulation tests below this (and, despite the name, under every profile —
+# see the nightly note).
+[profile.default.fuzz]
+runs = 256
+
+# Nightly deep-fuzz profile — `FOUNDRY_PROFILE=nightly forge test`.
+# Inherits every compiler setting from `default` (same bytecode, same build cache) and must
+# NEVER override one.
+#
+# How inline caps interact with it (verified on forge 1.5.0): a `/// forge-config: default.X`
+# line applies under EVERY profile, so the values below only reach tests with no inline line.
+# A test opts into a bigger nightly budget with its own `/// forge-config: nightly.X` line,
+# which overrides the `default.` line. `fail_on_revert` stays false at profile level (some
+# handlers deliberately let calls revert); revert-free suites opt in per test with
+# `/// forge-config: nightly.invariant.fail-on-revert = true`.
+#
+# Sizing (M2 Mac, 2026-09-04; expect a GitHub runner to be 2–3x slower):
+#   fuzz — the 98 uncapped fuzz tests took 11.5 s wall at 1000 runs, so 10000 runs is ~2 min.
+#   invariant — the whole `--match-test "^invariant_"` set ran in ~13 min wall: the profile
+#   values reach only ReentrancyInvariant (5 x 3000 x 500 = 7.5M calls, ~9.5 min); the other
+#   suites carry their own `nightly.invariant.*` lines (Core 500x500, Gov 1000x500,
+#   SimHook 1000x500, Jit 3000x500), each 2–13 min, running in parallel.
+[profile.nightly.fuzz]
+runs = 10000
+[profile.nightly.invariant]
+runs = 3000
+depth = 500
+
+# Iteration profile: skips the solc optimizer entirely (via_ir stays on — the unoptimized
+# IR pipeline compiles ~3x faster and has its own stack handling). Bytecode is less
+# efficient — DO NOT use for any deploy or gas measurement.
+# Opt in with `FOUNDRY_PROFILE=dev forge build|test`.
+[profile.dev]
+optimizer = false
+
+[lint]
+exclude_lints = ["screaming-snake-case-immutable", "screaming-snake-case-const"]
+lint_on_build = false
+
+# What developers and CI format with. Closest forge fmt match to the hand style (headers keep
+# their params-first shape). The tree-wide `forge fmt` sweep is deferred until a colleague's
+# changes merge; until then CI's fmt check is advisory.
+[fmt]
+line_length = 120
+multiline_func_header = "params_first_multi"
+prefer_compact = "none"

@@ -1,0 +1,23 @@
+# Dependabot: GitHub Actions only.
+#
+# `gitsubmodule` is deliberately absent. The lib/ submodules are pinned by hand to reviewed
+# revisions (recorded in foundry.lock) and bumped on a manual review cadence, never by a bot.
+# There is no npm / pip / cargo manifest in this repo, so no other ecosystem applies.
+#
+# Labels are applied only if they already exist in the repository.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns:
+          - "*"
+    labels:
+      - ci
+      - dependencies
+    commit-message:
+      prefix: "ci(deps)"

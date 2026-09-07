@@ -1,0 +1,9 @@
+{
+  "swap_full: simhook STEADY (full dyn-fee path)": "83622",
+  "swap_full: vanilla v4 FIRST (cold-slot swap, no hook)": "119215",
+  "swap_full: vanilla v4 STEADY (static fee, no hook)": "54441",
+  "swap_noChecks: simhook FIRST (cold-slot swap)": "168874",
+  "swap_noChecks: simhook STEADY (full dyn-fee path)": "67520",
+  "swap_noChecks: vanilla v4 FIRST (cold-slot swap, no hook)": "103113",
+  "swap_noChecks: vanilla v4 STEADY (static fee, no hook)": "38339"
+}

@@ -1,0 +1,330 @@
+# CI: the push / pull-request gate.
+#
+# Job layout
+#   fmt-lint   no compile. `forge fmt --check` (blocking; the tree is swept) and a
+#              `forge lint` report.
+#   build      `forge build --sizes` on the default profile. Populates the shared compile cache
+#              (cache/ + out/); every other compiling job `needs: build` and restores it.
+#   test       full suite on the DEFAULT profile, the audited/deployed compile profile.
+#              FOUNDRY_PROFILE is never set here; the per-test `/// forge-config` caps apply
+#              under every profile, so the default profile is simply the PR-sized budget.
+#   gas        `.gas-snapshot` check for deterministic tests + the test/gas JSON snapshots.
+#   slither    static analysis -> SARIF (code scanning) + artifact. `fail-on: none`; GitHub's
+#              protection rules gate on the uploaded results.
+#   aderyn     static analysis -> report artifact. Advisory.
+#
+# Status-check names (the job `name:` values, as they appear in a branch ruleset's
+# "Require status checks to pass" picker):
+#   Format & lint
+#   Build
+#   Test (default profile)
+#   Gas snapshots
+#   Slither
+#   Aderyn          (advisory: continue-on-error at job level, never blocks)
+#
+# Coverage is NOT here: on this via-IR tree it needs `--ir-minimum` and reruns the whole suite on
+# an instrumented build, so it lives in nightly.yml.
+#
+# The compile is the expensive part (via-IR, ~20 min cold). forge's cache is content-addressed per
+# file, so a prefix hit on `restore-keys` still skips most of it.
+name: CI
+
+on:
+  push:
+    # Working branches get their checks from the pull_request trigger (branch -> PR into main);
+    # a push trigger on them too would run everything twice. audit-* and v* are pushed directly
+    # (amend + force-push flow) and have no PR, so they keep a push trigger.
+    branches: [main, 'audit-*', 'v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # Superseded PR pushes cancel the previous run; pushes to main always complete.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  FOUNDRY_VERSION: v1.5.0
+  # Bump to discard the compile cache (e.g. to prove a cold build); part of every cache key.
+  CACHE_VERSION: v2
+  # Compiler warnings are build errors in CI only (user's choice: local builds stay lenient).
+  # The tree compiles warning-free today; lib/ is exempt via `ignored_warnings_from` in
+  # foundry.toml. Verified on forge 1.5.0: FOUNDRY_DENY overrides the toml `deny` key.
+  FOUNDRY_DENY: warnings
+
+jobs:
+  fmt-lint:
+    name: Format & lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+        with:
+          version: ${{ env.FOUNDRY_VERSION }}
+
+      # The tree is formatted with the `[fmt]` block in foundry.toml; this check keeps it that
+      # way. The sweep commit is listed in .git-blame-ignore-revs so blame skips it.
+      - name: forge fmt --check
+        run: forge fmt --check
+
+      # Report only. FOUNDRY_DENY=warnings (workflow env) also makes the linter treat its
+      # warnings as errors, so this step opts back out; the compiler deny stays on the build.
+      - name: forge lint (report)
+        env:
+          FOUNDRY_DENY: never
+        run: forge lint
+
+  build:
+    name: Build
+    # Repository variable FORGE_RUNNER selects a larger GitHub-hosted runner for the via-IR
+    # compile where the standard 7 GB private-repo runner is too small; unset = ubuntu-latest.
+    runs-on: ${{ vars.FORGE_BUILD_RUNNER || vars.FORGE_RUNNER || 'ubuntu-latest' }}
+    # A cold via-IR compile of the whole tree took 22 min on an M2; a hosted runner is slower
+    # per core and solc is single-threaded, so the first run (empty cache) can approach an
+    # hour. Warm runs are seconds. A timeout kill shows as exit code 143.
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+        with:
+          version: ${{ env.FOUNDRY_VERSION }}
+
+      - name: Restore / save compile cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            cache/
+            out/
+          key: foundry-${{ runner.os }}-${{ env.FOUNDRY_VERSION }}-${{ env.CACHE_VERSION }}-${{ hashFiles('foundry.toml', 'foundry.lock', 'src/**/*.sol', 'test/**/*.sol', 'script/**/*.sol') }}
+          restore-keys: |
+            foundry-${{ runner.os }}-${{ env.FOUNDRY_VERSION }}-${{ env.CACHE_VERSION }}-
+
+      # Standard private-repo runners have 7 GB RAM plus the image's own 4 GB /swapfile, and the
+      # single-process via-IR compile still got killed (exit 143) ~8 minutes in, so its peak is
+      # above 11 GB. Add 8 GB more on the runner's spare disk as margin for the staged compile.
+      # Harmless on larger runners.
+      - name: Add 8 GB swap
+        run: |
+          free -h
+          target=/mnt/swapfile2
+          if ! sudo test -d /mnt || ! sudo touch /mnt/.w 2>/dev/null; then target=/swapfile2; fi
+          sudo rm -f /mnt/.w
+          sudo fallocate -l 8G "$target"
+          sudo chmod 600 "$target"
+          sudo mkswap "$target"
+          sudo swapon "$target"
+          free -h
+          df -h / /mnt 2>/dev/null || df -h /
+
+      # Staged compile to cap solc's peak memory: one solc process code-generates everything it
+      # is asked for at once, and every test that deploys the hook inlines the hook's creation
+      # code. Stage 1 generates code for src/ only; stage 2 finds src/ cached and generates the
+      # tests and scripts. Same artifacts, smaller peaks.
+      # The compile runs under a memory monitor that prints `free -m` every 15 s: hosted runners
+      # keep no memory telemetry and a killed job has no post-mortem, but streamed log lines
+      # survive, so the curve up to a kill is visible in the failed job's log.
+      # .github/scripts/build-staged.sh compiles src/ first, then test/ and script/ in batches by
+      # directory, so no single solc process holds the whole harness in memory, then runs
+      # `forge build --sizes` on the warm cache.
+      - name: forge build (staged, batched)
+        run: |
+          ( while true; do echo "[mem $(date +%T)] $(free -m | awk '/Mem:/{printf "used %d/%d MB", $3, $2} /Swap:/{printf "  swap %d/%d MB", $3, $2}')"; sleep 15; done ) & MON=$!
+          forge --version
+          bash .github/scripts/build-staged.sh
+          kill $MON
+
+  test:
+    name: Test (default profile)
+    needs: build
+    # Repository variable FORGE_RUNNER selects a larger GitHub-hosted runner for the via-IR
+    # compile where the standard 7 GB private-repo runner is too small; unset = ubuntu-latest.
+    runs-on: ${{ vars.FORGE_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+        with:
+          version: ${{ env.FOUNDRY_VERSION }}
+
+      - name: Restore compile cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            cache/
+            out/
+          key: foundry-${{ runner.os }}-${{ env.FOUNDRY_VERSION }}-${{ env.CACHE_VERSION }}-${{ hashFiles('foundry.toml', 'foundry.lock', 'src/**/*.sol', 'test/**/*.sol', 'script/**/*.sol') }}
+          restore-keys: |
+            foundry-${{ runner.os }}-${{ env.FOUNDRY_VERSION }}-${{ env.CACHE_VERSION }}-
+
+      # No FOUNDRY_PROFILE on purpose: the default profile is the audited/deployed compile
+      # profile and the PR-sized fuzz/invariant budget. (Inline per-test caps apply under every
+      # profile; the nightly profile only raises the budget for tests without a cap.)
+      - name: forge test
+        run: forge test -vvv
+
+  gas:
+    name: Gas snapshots
+    needs: build
+    # Repository variable FORGE_RUNNER selects a larger GitHub-hosted runner for the via-IR
+    # compile where the standard 7 GB private-repo runner is too small; unset = ubuntu-latest.
+    runs-on: ${{ vars.FORGE_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+        with:
+          version: ${{ env.FOUNDRY_VERSION }}
+
+      - name: Restore compile cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            cache/
+            out/
+          key: foundry-${{ runner.os }}-${{ env.FOUNDRY_VERSION }}-${{ env.CACHE_VERSION }}-${{ hashFiles('foundry.toml', 'foundry.lock', 'src/**/*.sol', 'test/**/*.sol', 'script/**/*.sol') }}
+          restore-keys: |
+            foundry-${{ runner.os }}-${{ env.FOUNDRY_VERSION }}-${{ env.CACHE_VERSION }}-
+
+      # .gas-snapshot is generated with the same filter: fuzz and invariant entries vary with the
+      # seed, so only deterministic tests are compared. When a gas change is intentional, run
+      # `forge snapshot --no-match-test "[Ff]uzz|^invariant_"` locally and commit the result.
+      # --tolerance 1: two large test contracts compile layout-sensitively under via-IR, so
+      # their totals differ by up to ~0.3% between the batched CI build and a local single
+      # invocation. The per-operation snapshots/*.json checks below stay exact.
+      - name: forge snapshot --check
+        run: forge snapshot --check --tolerance 1 --no-match-test "[Ff]uzz|^invariant_"
+
+      # snapshots/*.json are written by vm.snapshotGas* in test/gas; with FORGE_SNAPSHOT_CHECK
+      # the cheatcodes compare against the committed values instead of overwriting them.
+      - name: test/gas JSON snapshots
+        env:
+          FORGE_SNAPSHOT_CHECK: "true"
+        run: forge test --match-path "test/gas/*"
+
+  slither:
+    name: Slither
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+
+      # Best effort: slither-action compiles inside its own container with its own Foundry
+      # install. forge's cache is keyed on solc version + settings + content, so a matching
+      # entry is reused; a mismatch just recompiles.
+      - name: Restore compile cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            cache/
+            out/
+          key: foundry-${{ runner.os }}-${{ env.FOUNDRY_VERSION }}-${{ env.CACHE_VERSION }}-${{ hashFiles('foundry.toml', 'foundry.lock', 'src/**/*.sol', 'test/**/*.sol', 'script/**/*.sol') }}
+          restore-keys: |
+            foundry-${{ runner.os }}-${{ env.FOUNDRY_VERSION }}-${{ env.CACHE_VERSION }}-
+
+      - name: Run Slither
+        id: slither
+        uses: crytic/slither-action@b52cc1cbfee9ca3e8722dd5224299d16c9a6b80f # v0.4.2
+        with:
+          # Pin the analyser itself, not just the action: an unpinned install tracks the latest
+          # Slither release, so findings could change between runs with no change in the tree.
+          slither-version: "0.11.6"
+          slither-config: slither.config.json
+          sarif: results.sarif
+          fail-on: none
+
+      # Code scanning is free on public repos and an add-on on private ones: blocking when
+      # public, advisory when private (findings are still uploaded as an artifact below).
+      - name: Upload SARIF to code scanning
+        continue-on-error: ${{ github.event.repository.private }}
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        with:
+          sarif_file: ${{ steps.slither.outputs.sarif }}
+
+      - name: Upload SARIF artifact
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: slither-sarif
+          path: results.sarif
+          if-no-files-found: warn
+
+  aderyn:
+    name: Aderyn
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Advisory as a whole: a bad release URL or a tool crash must not turn the run red.
+    continue-on-error: true
+    env:
+      # Tag `aderyn-v0.6.8` and asset `aderyn-x86_64-unknown-linux-gnu.tar.xz` verified against
+      # the 0.6.8 release on 2026-09-04. Dependabot does not bump this pin; update it by hand.
+      ADERYN_VERSION: "0.6.8"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+        with:
+          version: ${{ env.FOUNDRY_VERSION }}
+
+      - name: Install Aderyn (pinned release binary, checksum-verified)
+        run: |
+          set -euo pipefail
+          base="https://github.com/Cyfrin/aderyn/releases/download/aderyn-v${ADERYN_VERSION}"
+          asset="aderyn-x86_64-unknown-linux-gnu.tar.xz"
+          echo "Downloading ${base}/${asset}"
+          curl -sSfL "${base}/${asset}" -o "$asset"
+          curl -sSfL "${base}/${asset}.sha256" -o "${asset}.sha256"
+          # cargo-dist sidecar is "<hash>  <filename>" (or a bare hash): compare the first field.
+          expected="$(awk 'NR==1 {print $1}' "${asset}.sha256")"
+          actual="$(sha256sum "$asset" | awk '{print $1}')"
+          if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
+            echo "::error::Aderyn checksum mismatch: expected '${expected}' got '${actual}'"
+            exit 1
+          fi
+          mkdir -p "$HOME/.local/bin" aderyn-dist
+          tar -xJf "$asset" -C aderyn-dist
+          bin="$(find aderyn-dist -type f -name aderyn | head -n 1)"
+          install -m 0755 "$bin" "$HOME/.local/bin/aderyn"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/aderyn" --version
+
+      - name: Run Aderyn
+        run: |
+          set -euo pipefail
+          aderyn --skip-update-check --output aderyn-report.md .
+          # SARIF output is extension-driven in recent releases; tolerate older CLIs.
+          aderyn --skip-update-check --output aderyn-report.sarif . || echo "::warning::aderyn SARIF output unsupported by this version"
+
+      - name: Upload Aderyn report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: aderyn-report
+          path: |
+            aderyn-report.md
+            aderyn-report.sarif
+          if-no-files-found: warn

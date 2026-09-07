@@ -1,0 +1,19 @@
+{
+  "add_full: simhook FIRST (fresh position, jitLock=0)": "204449",
+  "add_full: simhook STEADY (existing position, jitLock=0)": "62857",
+  "add_full: vanilla v4 FIRST (fresh position, no hook)": "187109",
+  "add_full: vanilla v4 STEADY (existing position, no hook)": "56517",
+  "add_noChecks: simhook FIRST (fresh position, jitLock configured)": "213727",
+  "add_noChecks: simhook FIRST (fresh position, jitLock=0)": "191135",
+  "add_noChecks: simhook STEADY (existing position, jitLock configured)": "50235",
+  "add_noChecks: simhook STEADY (existing position, jitLock=0)": "49543",
+  "add_noChecks: vanilla v4 FIRST (fresh position, no hook)": "173795",
+  "add_noChecks: vanilla v4 STEADY (existing position, no hook)": "43203",
+  "poke_noChecks: simhook STEADY (zero-delta fee poke, inside JIT window)": "19390",
+  "poke_noChecks: vanilla v4 STEADY (zero-delta fee poke, no hook)": "17585",
+  "remove_full: simhook STEADY (partial remove, jitLock=0)": "50432",
+  "remove_full: vanilla v4 STEADY (partial remove, no hook)": "47821",
+  "remove_noChecks: simhook STEADY (partial remove, jitLock configured, outside window)": "37919",
+  "remove_noChecks: simhook STEADY (partial remove, jitLock=0)": "37211",
+  "remove_noChecks: vanilla v4 STEADY (partial remove, no hook)": "34600"
+}
