@@ -35,7 +35,7 @@ contract SettlementBoundaryTest is Test {
     /// @dev the largest take the hook can compute on a magnitude, over the whole reachable
     ///      (dynamicFee, bps) lattice
     function _maxTake(uint256 mag) internal pure returns (uint256) {
-        uint24 maxDynamicFee = LPFeeLibrary.MAX_LP_FEE - 1; // configurePool rejects MAX_LP_FEE
+        uint24 maxDynamicFee = LPFeeLibrary.MAX_LP_FEE - 1; // v4's own ceiling; the hook's 50% maxFee cap is tighter still
         uint24 hookFee = uint24(uint256(maxDynamicFee) * MAX_PROTOCOL_FEE_BPS / 10_000);
         return FullMath.mulDiv(mag, hookFee, HookMath.PIPS_SCALE);
     }

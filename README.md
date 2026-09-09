@@ -41,7 +41,7 @@ Per-pool parameters are set once per pool in `configurePool`. There is no reconf
 | --- | --- | --- |
 | `kPips` / `cPips` | `1 … 20e6` (1e6 = 1.0×) | Leg weights: `k` on imbalance-increasing legs, `c` on decreasing. `c <= k` is **not** enforced; the ordering is a deployer choice. |
 | `minMinFee` / `maxMinFee` | `minMinFee <= maxMinFee <= maxFee` | Fee floor, ramped from `min` to `max` off `rampAnchor`. |
-| `maxFee` | `< MAX_LP_FEE` (max 999_999 pips; 1e6 = 100% is rejected) | Hard clamp on the quoted fee, applied after the directional weighting. |
+| `maxFee` | `<= 500_000` pips (50%; hook-wide ceiling, above it `FeeTooHigh`) | Hard clamp on the quoted fee, applied after the directional weighting. |
 | `timeDecayLength` | `1 … 1 days` | Window over which the accumulator decays to zero without any swaps. |
 | `jitLockBlocks` | `0 … 50_400` (≈7 days) | Blocks a position must age after `addLiquidity` before `removeLiquidity` is permitted. Keyed on v4-core's exact position key; fee-only pokes (`liquidityDelta == 0`) are exempt. The ceiling is headroom far above the few-block locks used in practice. |
 

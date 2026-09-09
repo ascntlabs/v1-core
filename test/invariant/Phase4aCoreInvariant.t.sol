@@ -21,9 +21,9 @@ import {MockERC20} from "solmate/src/test/utils/mocks/MockERC20.sol";
 ///
 /// Two pools share one SimHook and the same two currencies but differ in tickSpacing (so poolId
 /// differs) and in config: pool A is the production-shaped stable pair, pool B an adversarial
-/// extreme (maxFee 999_999 — deliberately 1 pip under the 1e6 cap so v4's InvalidFeeForExactOut
-/// edge, demonstrated separately in Phase4aAccLifecycle, cannot fire inside this revert-free
-/// campaign). The campaign runs with fail-on-revert=true: ANY unexpected revert in a handler
+/// extreme (maxFee at the hook-wide HOOK_MAX_FEE cap — v4's InvalidFeeForExactOut edge needs a
+/// 100% fee, so it cannot fire inside this revert-free campaign; the cap is pinned in
+/// Phase4aProbe). The campaign runs with fail-on-revert=true: ANY unexpected revert in a handler
 /// action (in particular any swap revert — FEE-14) fails the run.
 contract Phase4aCoreInvariantTest is SimHookUtils {
     using PoolIdLibrary for PoolKey;
@@ -54,7 +54,7 @@ contract Phase4aCoreInvariantTest is SimHookUtils {
         // pool B: same currencies + hook, tickSpacing 10 => distinct poolId; adversarial config
         (keyB, poolIdB) =
             initPool(currency0, currency1, IHooks(address(hook)), LPFeeLibrary.DYNAMIC_FEE_FLAG, 10, initSqrtP);
-        hook.configurePool(poolIdB, 0, 1_000, 999_999, 900, 0, 2e6, 1e6);
+        hook.configurePool(poolIdB, 0, 1_000, HOOK_MAX_FEE, 900, 0, 2e6, 1e6);
         modifyLiquidityRouter.modifyLiquidity(
             keyB, ModifyLiquidityParams({tickLower: -600, tickUpper: 600, liquidityDelta: 3e13, salt: bytes32(0)}), ""
         );

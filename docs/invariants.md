@@ -11,7 +11,7 @@ exception recorded there.
 
 ## Fee quoting
 
-1. **Every quoted fee lies in `[effectiveMinFee, maxFee]`**, and `maxFee < MAX_LP_FEE` by
+1. **Every quoted fee lies in `[effectiveMinFee, maxFee]`**, and `maxFee ≤ 500_000` (50 %) by
    `configurePool`'s bounds — the hook can never return a fee v4-core would reject.
    Enforced: final clamp in `SimHook.calculateDynamicFee`; bounds in `configurePool`.
    Tests: `test/fuzz/Phase1DynamicFee.t.sol`, `test/feature/ConfigurePoolBounds.t.sol`.

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
-import {LPFeeLibrary} from "@uniswap/v4-core/src/libraries/LPFeeLibrary.sol";
 import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
@@ -89,9 +88,9 @@ abstract contract ConfigurePoolBoundsBase is TestUtils {
     }
 
     function test_configurePool_revertsOnFeeTooHigh() public {
-        // MAX_LP_FEE itself is rejected: a 100% fee is never quotable
+        // one pip above the hook-wide 50% ceiling
         _expectConfigRevert(SimHook.FeeTooHigh.selector);
-        _configurePool(100, LPFeeLibrary.MAX_LP_FEE, 1 hours, 50, 2e6, 1e6);
+        _configurePool(100, HOOK_MAX_FEE + 1, 1 hours, 50, 2e6, 1e6);
     }
 
     function test_configurePool_revertsOnZeroDecay() public {
@@ -114,11 +113,11 @@ abstract contract ConfigurePoolBoundsBase is TestUtils {
 
     // ------ accept-side boundaries (the reject side is covered above) ------
 
-    function test_configurePool_acceptsMaxFeeJustBelowMaxLpFee() public {
-        _configurePool(100, LPFeeLibrary.MAX_LP_FEE - 1, 1 hours, 50, 2e6, 1e6);
+    function test_configurePool_acceptsMaxFeeAtCap() public {
+        _configurePool(100, HOOK_MAX_FEE, 1 hours, 50, 2e6, 1e6);
         (bool configured,,, uint24 maxFee,,,,) = SimHook(address(hook)).poolConfig(poolId);
         assertTrue(configured);
-        assertEq(maxFee, LPFeeLibrary.MAX_LP_FEE - 1);
+        assertEq(maxFee, HOOK_MAX_FEE);
     }
 
     function test_configurePool_acceptsJitLockAtMax() public {
@@ -266,7 +265,7 @@ abstract contract ConfigurePoolBoundsBase is TestUtils {
         // jit bound never fires between DecayTooLong and the weight checks.
         if (minFee > maxFee) {
             expected = SimHook.FeeBounds.selector;
-        } else if (maxFee >= LPFeeLibrary.MAX_LP_FEE) {
+        } else if (maxFee > HOOK_MAX_FEE) {
             expected = SimHook.FeeTooHigh.selector;
         } else if (timeDecayLength == 0) {
             expected = SimHook.ZeroDecay.selector;

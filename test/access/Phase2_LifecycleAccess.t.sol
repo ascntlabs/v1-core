@@ -137,7 +137,7 @@ contract Phase2LifecycleAccessTest is TestUtils {
     /// forge-config: default.fuzz.runs = 200
     /// forge-config: dev.fuzz.runs = 200
     function testFuzz_life2_configuredImpliesFullBoundChain(uint24 a, uint24 b, uint24 c, uint256 e, uint48 f) public {
-        uint24 maxFee = uint24(bound(a, 0, 1_100_000)); // straddles MAX_LP_FEE (1e6)
+        uint24 maxFee = uint24(bound(a, 0, 550_000)); // straddles the hook's maxFee cap (500_000)
         uint24 maxMin = uint24(bound(b, 0, (uint256(maxFee) * 12) / 10 + 2));
         uint24 minMin = uint24(bound(c, 0, (uint256(maxMin) * 12) / 10 + 2));
         uint256 decay = bound(e, 0, hook.MAX_TIME_DECAY_LENGTH() * 2); // straddles the 1-day cap
@@ -183,7 +183,7 @@ contract Phase2LifecycleAccessTest is TestUtils {
 
             assertLe(sMinMin, sMaxMin, "minMinFee <= maxMinFee");
             assertLe(sMaxMin, sMaxFee, "maxMinFee <= maxFee");
-            assertLe(sMaxFee, LPFeeLibrary.MAX_LP_FEE, "maxFee <= MAX_LP_FEE");
+            assertLe(sMaxFee, HOOK_MAX_FEE, "maxFee <= hook cap");
         }
         {
             (,,,, uint48 sDecay, uint48 sJit, uint32 sK, uint32 sC) = hook.poolConfig(poolId);

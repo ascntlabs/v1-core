@@ -160,7 +160,7 @@ contract Phase4aAccLifecycleTest is SimHookUtils {
         vm.prank(attacker);
         manager.initialize(keyX, SQRT_PRICE_1_1);
         vm.prank(attacker);
-        hook.configurePool(idX, 0, 0, LPFeeLibrary.MAX_LP_FEE - 1, 1, 7200, 2e6, 1e6);
+        hook.configurePool(idX, 0, 0, HOOK_MAX_FEE, 1, 7200, 2e6, 1e6);
 
         // the stored config still satisfies the full bound chain — damage is capped
         (
@@ -176,7 +176,7 @@ contract Phase4aAccLifecycleTest is SimHookUtils {
         assertTrue(configured);
         assertLe(minMinFee, maxMinFee);
         assertLe(maxMinFee, maxFee);
-        assertLt(maxFee, LPFeeLibrary.MAX_LP_FEE);
+        assertLe(maxFee, HOOK_MAX_FEE);
         assertGe(timeDecayLength, 1);
         assertLe(timeDecayLength, hook.MAX_TIME_DECAY_LENGTH());
         assertLe(jitLockBlocks, hook.MAX_JIT_LOCK_BLOCKS());
@@ -205,7 +205,7 @@ contract Phase4aAccLifecycleTest is SimHookUtils {
         (,,, uint24 maxFeeY,,,,) = hook.poolConfig(idY);
         assertEq(uint256(maxFeeY), 10_000, "relaunch config wrong");
         (,,, uint24 maxFeeX,,,,) = hook.poolConfig(idX);
-        assertEq(uint256(maxFeeX), LPFeeLibrary.MAX_LP_FEE - 1, "squatted config must be untouched by the relaunch");
+        assertEq(uint256(maxFeeX), HOOK_MAX_FEE, "squatted config must be untouched by the relaunch");
     }
 
     // ------ LIFE-10: the pause is add-only and complete ------
@@ -314,11 +314,9 @@ contract Phase4aAccLifecycleTest is SimHookUtils {
         raw.batchSwap(steps); // reverting here fails the test — that is the assertion
     }
 
-    // NOTE: configurePool rejects maxFee == MAX_LP_FEE, so the 100%-fee exact-output revert
-    // (InvalidFeeForExactOut) is unreachable; the admissible cap MAX_LP_FEE - 1 is pinned in
-    // Phase4aProbe.t.sol:Phase4aExactOutFeeCapTest. Draining the price below
-    // MIN_USABLE_SQRT_PRICE via a drain swap is impractical on such a pool: at the cap only one
-    // pip of each exact-input trades, throttling price movement ~1e6x before the floor is near.
+    // NOTE: configurePool caps maxFee at HOOK_MAX_FEE (50%), so the 100%-fee exact-output revert
+    // (InvalidFeeForExactOut) is unreachable; the cap is pinned in
+    // Phase4aProbe.t.sol:Phase4aExactOutFeeCapTest.
 }
 
 /// @notice ACC-8 + LIFE-13(revert half): a swap that fails inside _afterSwap (the protocol-fee
