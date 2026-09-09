@@ -14,14 +14,14 @@ import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 import {SwapParams, ModifyLiquidityParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
 import {PoolSwapTest} from "@uniswap/v4-core/src/test/PoolSwapTest.sol";
 
-/// @notice FEE-14 boundary. `configurePool` rejects maxFee == MAX_LP_FEE (1e6 = 100%) with
-///         `FeeTooHigh`, so the largest admissible cap is MAX_LP_FEE - 1 and no swap can carry
-///         the 100% override v4-core refuses for exact-output (`Pool.InvalidFeeForExactOut`).
-///         On a pool at that cap a large exact-OUTPUT swap makes the fee=0 simulator report
-///         ~100% price impact; under midpoint pricing the result is DIRECTION-DEPENDENT: into
-///         the standing imbalance the fee quotes 2|cum| + P, clamps to maxFee and the swap
-///         executes at 99.9999%; across zero the two-leg fee stays strictly below the cap for
-///         any standing |cum| > 0. Both arms pinned so a regression in either surfaces.
+/// @notice FEE-14 boundary. `configurePool` rejects maxFee above the hook-wide cap (HOOK_MAX_FEE,
+///         50%) with `FeeTooHigh`, so no swap can carry the 100% override v4-core refuses for
+///         exact-output (`Pool.InvalidFeeForExactOut`). On a pool at that cap a large
+///         exact-OUTPUT swap makes the fee=0 simulator report ~100% price impact; under
+///         midpoint pricing the result is DIRECTION-DEPENDENT: into the standing imbalance the
+///         fee quotes 2|cum| + P and clamps to maxFee; across zero the two-leg fee is exact
+///         (1e6 - 2C + 3C^2/(2e6)) unless it too exceeds the cap, where it clamps. Both arms
+///         pinned so a regression in either surfaces.
 contract Phase4aExactOutFeeCapTest is SimHookUtils {
     using PoolIdLibrary for PoolKey;
 
@@ -43,31 +43,31 @@ contract Phase4aExactOutFeeCapTest is SimHookUtils {
         StablePairPoolConfig cfg = new StablePairPoolConfig();
         (, initSqrtP) = setupSimHookAndPool(cfg, false);
         governance.setProtocolFeeBps(0);
-        // fresh pool at the largest admissible cap: maxFee = MAX_LP_FEE - 1
+        // fresh pool at the largest admissible cap: maxFee = HOOK_MAX_FEE
         (k, id) = initPool(currency0, currency1, IHooks(address(hook)), LPFeeLibrary.DYNAMIC_FEE_FLAG, 2, initSqrtP);
-        hook.configurePool(id, 1, 10, LPFeeLibrary.MAX_LP_FEE - 1, 900, 0, 2e6, 1e6);
+        hook.configurePool(id, 1, 10, HOOK_MAX_FEE, 900, 0, 2e6, 1e6);
         modifyLiquidityRouter.modifyLiquidity(
             k, ModifyLiquidityParams({tickLower: -600, tickUpper: 600, liquidityDelta: 1e12, salt: bytes32(0)}), ""
         );
         swapRouter.swap(k, _p(true, -1e9), S, ""); // priming swap builds a standing cum
     }
 
-    /// @notice The cap itself is not configurable: MAX_LP_FEE reverts, MAX_LP_FEE - 1 (the
+    /// @notice The cap itself is not configurable: HOOK_MAX_FEE + 1 reverts, HOOK_MAX_FEE (the
     ///         value the rest of this contract runs at) is the boundary.
-    function test_fee14_configurePool_rejectsMaxLpFee() public {
+    function test_fee14_configurePool_rejectsAboveCap() public {
         (, PoolId id2) =
             initPool(currency0, currency1, IHooks(address(hook)), LPFeeLibrary.DYNAMIC_FEE_FLAG, 3, initSqrtP);
         vm.expectRevert(SimHook.FeeTooHigh.selector);
-        hook.configurePool(id2, 1, 10, LPFeeLibrary.MAX_LP_FEE, 900, 0, 2e6, 1e6);
+        hook.configurePool(id2, 1, 10, HOOK_MAX_FEE + 1, 900, 0, 2e6, 1e6);
     }
 
     /// @notice DIRECTION-DEPENDENT under midpoint pricing. The priming swap leaves cum < 0, so
     ///         a large exact-out INTO the imbalance (zeroForOne) quotes k x midpoint = 2|cum| + P
-    ///         >= P = 1e6: the fee clamps to maxFee = MAX_LP_FEE - 1, a valid exact-output
+    ///         >= P = 1e6: the fee clamps to maxFee = HOOK_MAX_FEE, a valid exact-output
     ///         override, and the swap executes. AGAINST the imbalance the swap CROSSES zero and
     ///         the two-leg fee C^2/(2P) + 2(P-C)^2/(2P) = 1e6 - 2C + 3C^2/(2e6) sits strictly
-    ///         BELOW the cap for any standing C > 0 (endpoint pricing pegged both directions
-    ///         via own-P).
+    ///         below 1e6 for any standing C > 0 (endpoint pricing pegged both directions via
+    ///         own-P); it exceeds the hook cap unless C > 1e6/3, so it too clamps at these sizes.
     /// forge-config: default.fuzz.runs = 64
     function testFuzz_fee14_largeExactOut_pegsIntoImbalance_nearCapAcrossZero(uint256 outSeed, bool zeroForOne) public {
         uint256 out = _bound(outSeed, 1e11, 5e11); // large relative to the 1e12 range depth
@@ -78,25 +78,26 @@ contract Phase4aExactOutFeeCapTest is SimHookUtils {
         assertLt(absCum, 1e6, "precondition: imbalance well below the impact cap");
 
         if (zeroForOne) {
-            // into the imbalance: 2C + P with P pegged at 1e6 => fee clamps to maxFee < 1e6
+            // into the imbalance: 2C + P with P pegged at 1e6 => fee clamps to maxFee
             vm.recordLogs();
             swapRouter.swap(k, _p(true, int256(out)), S, ""); // must NOT revert
             BeforeSwapEventData memory b = getBeforeSwapEventData(vm.getRecordedLogs());
-            assertEq(uint256(b.dynamicFeePips), uint256(LPFeeLibrary.MAX_LP_FEE - 1), "fee must clamp to maxFee");
+            assertEq(uint256(b.dynamicFeePips), uint256(HOOK_MAX_FEE), "fee must clamp to maxFee");
         } else {
             // crossing: exact two-leg recompute at P = 1e6 (these sizes run the sim to the
             // price limit, pegging the impact cap; mulDiv floors reproduced exactly — ONE floor
-            // per leg, since each leg applies its weight inside a single mulDiv)
+            // per leg, since each leg applies its weight inside a single mulDiv), then the hook cap
             uint256 twoP = 2e6;
             uint256 E = 1e6 - absCum;
             uint256 expected = (absCum * absCum) / twoP + (2 * E * E) / twoP;
+            if (expected > HOOK_MAX_FEE) expected = HOOK_MAX_FEE;
 
             vm.recordLogs();
             swapRouter.swap(k, _p(false, int256(out)), S, ""); // must NOT revert
             BeforeSwapEventData memory b = getBeforeSwapEventData(vm.getRecordedLogs());
             assertEq(b.priceImpact, 1e6, "simulator must peg the impact cap");
-            assertEq(uint256(b.dynamicFeePips), expected, "crossing fee must equal the exact two-leg midpoint value");
-            assertLt(uint256(b.dynamicFeePips), 1e6, "cap approached, never reached => no InvalidFeeForExactOut");
+            assertEq(uint256(b.dynamicFeePips), expected, "crossing fee must equal the clamped two-leg midpoint value");
+            assertLe(uint256(b.dynamicFeePips), HOOK_MAX_FEE, "never above the hook cap => no InvalidFeeForExactOut");
         }
     }
 

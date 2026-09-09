@@ -16,7 +16,7 @@ import {StablePairPoolConfig} from "../lib/PoolConfigs.sol";
 /// @notice phase3-differential — SETTLE-3: the lpFee the hook feeds v4-core as
 ///         `lpFee | OVERRIDE_FEE_FLAG` is ALWAYS a valid override, differentialed against
 ///         v4's own `LPFeeLibrary.removeOverrideFlagAndValidate`, including the worst case
-///         maxFee == MAX_LP_FEE - 1 (the largest configurePool admits) with protocolFeeBps
+///         maxFee == HOOK_MAX_FEE (the largest configurePool admits, 50%) with protocolFeeBps
 ///         at the 20% cap.
 contract Phase3_Settle3_FeeOverrideTest is Phase3HookTestBase {
     SimHookHarness internal harness;
@@ -31,8 +31,8 @@ contract Phase3_Settle3_FeeOverrideTest is Phase3HookTestBase {
         hook = SimHook(hookAddress);
 
         (, uint160 initSqrtP) = deployPool(IHooks(hookAddress), 0, 1, false);
-        // the worst-case shape: maxFee at the largest admissible value (MAX_LP_FEE - 1)
-        harness.configurePool(poolId, 1, 10, LPFeeLibrary.MAX_LP_FEE - 1, 900, 0, 2e6, 1e6);
+        // the worst-case shape: maxFee at the hook-wide ceiling
+        harness.configurePool(poolId, 1, 10, HOOK_MAX_FEE, 900, 0, 2e6, 1e6);
         addLiquidity(-600, 600, 1e12, initSqrtP, false);
         // The split carves only while the LIVE `governance.treasury()` is set; with none, every
         // bps degrades to "full dynamic fee to LPs" and the differential below would only ever
@@ -42,9 +42,9 @@ contract Phase3_Settle3_FeeOverrideTest is Phase3HookTestBase {
 
     /// @dev Differential vs v4's own validator across the ENTIRE reachable input lattice:
     ///      every dynamicFee calculateDynamicFee can emit on a configurePool-admitted pool
-    ///      (<= maxFee < MAX_LP_FEE) x every governance-reachable bps (<= 2000). Every
-    ///      _beforeSwap invocation routes through this exact split, so the property
-    ///      covers the return site.
+    ///      (<= maxFee <= HOOK_MAX_FEE; fuzzed up to v4's own cap, a superset) x every
+    ///      governance-reachable bps (<= 2000). Every _beforeSwap invocation routes through
+    ///      this exact split, so the property covers the return site.
     /// forge-config: default.fuzz.runs = 256
     function testFuzz_settle3_splitAlwaysValidOverride(uint24 dynamicFee, uint16 bps) public {
         dynamicFee = uint24(bound(dynamicFee, 0, LPFeeLibrary.MAX_LP_FEE - 1));
@@ -68,8 +68,8 @@ contract Phase3_Settle3_FeeOverrideTest is Phase3HookTestBase {
     }
 
     /// @dev End-to-end at the extreme: a liquidity-exhausting swap saturates the simulated
-    ///      impact at 100% so dynamicFee clamps to maxFee == MAX_LP_FEE - 1; with bps at the
-    ///      cap the engine receives lpFee = 800_000 — the LARGEST lpFee an admissible config can
+    ///      impact at 100% so dynamicFee clamps to maxFee == HOOK_MAX_FEE; with bps at the
+    ///      cap the engine receives lpFee = 400_000 — the LARGEST lpFee an admissible config can
     ///      produce with a protocol cut — and must accept it (the swap succeeding IS the
     ///      differential: an invalid override reverts inside v4-core).
     function test_settle3_maxFee_maxBps_endToEnd() public {
@@ -81,8 +81,8 @@ contract Phase3_Settle3_FeeOverrideTest is Phase3HookTestBase {
         (, Vm.Log[] memory logs) = swap(true, -3e12, false); // >> pool capacity: impact caps at 1e6
         BeforeSwapEventData memory b = getBeforeSwapEventData(logs);
 
-        assertEq(b.dynamicFeePips, LPFeeLibrary.MAX_LP_FEE - 1, "must clamp to dynamicFee == maxFee == MAX_LP_FEE - 1");
-        uint24 expectedLpFee = 800_000; // 999_999 - floor(999_999 * 2000 / 10_000)
+        assertEq(b.dynamicFeePips, HOOK_MAX_FEE, "must clamp to dynamicFee == maxFee == HOOK_MAX_FEE");
+        uint24 expectedLpFee = 400_000; // 500_000 - floor(500_000 * 2000 / 10_000)
         assertEq(
             LPFeeLibrary.removeOverrideFlagAndValidate(expectedLpFee | LPFeeLibrary.OVERRIDE_FEE_FLAG),
             expectedLpFee,
@@ -92,11 +92,10 @@ contract Phase3_Settle3_FeeOverrideTest is Phase3HookTestBase {
         assertTrue(_parseProtocolFeeTaken(logs).found, "protocol take must settle at the extreme");
     }
 
-    /// @dev bps == 0 pushes the other endpoint: lpFee == MAX_LP_FEE - 1, the largest LP fee
-    ///      v4 can ever see from this hook. One pip of the input still trades, so the price
-    ///      moves — the 100%-fee "price frozen" edge is unreachable now that configurePool
-    ///      rejects MAX_LP_FEE.
-    function test_settle3_maxFee_zeroBps_lpFeeJustBelowCap() public {
+    /// @dev bps == 0 pushes the other endpoint: lpFee == HOOK_MAX_FEE, the largest LP fee
+    ///      v4 can ever see from this hook. Half the input still trades, so the price moves —
+    ///      the 100%-fee "price frozen" edge is unreachable under the hook-wide cap.
+    function test_settle3_maxFee_zeroBps_lpFeeAtHookCap() public {
         harness.harnessSetProtocolFeeBps(0);
 
         swap(true, -1e8, false);
@@ -105,14 +104,14 @@ contract Phase3_Settle3_FeeOverrideTest is Phase3HookTestBase {
         (SwapValues memory v, Vm.Log[] memory logs) = swap(true, -3e12, false);
         BeforeSwapEventData memory b = getBeforeSwapEventData(logs);
 
-        uint24 cap = LPFeeLibrary.MAX_LP_FEE - 1;
-        assertEq(b.dynamicFeePips, cap, "must clamp to dynamicFee == MAX_LP_FEE - 1");
+        uint24 cap = HOOK_MAX_FEE;
+        assertEq(b.dynamicFeePips, cap, "must clamp to dynamicFee == HOOK_MAX_FEE");
         assertEq(
             LPFeeLibrary.removeOverrideFlagAndValidate(cap | LPFeeLibrary.OVERRIDE_FEE_FLAG),
             cap,
-            "SETTLE-3: MAX_LP_FEE - 1 override must validate"
+            "SETTLE-3: HOOK_MAX_FEE override must validate"
         );
-        assertLt(v.sqrtPriceX96After, v.sqrtPriceX96Before, "one pip of input must still move the price");
+        assertLt(v.sqrtPriceX96After, v.sqrtPriceX96Before, "half the input must still move the price");
     }
 }
 

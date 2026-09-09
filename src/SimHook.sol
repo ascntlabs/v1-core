@@ -110,6 +110,9 @@ contract SimHook is AscntBaseHook {
 
     uint256 public constant MAX_TIME_DECAY_LENGTH = 1 days;
 
+    /// @dev Hook-wide ceiling on a pool's maxFee: 50 %
+    uint24 internal constant MAX_FEE = 500_000;
+
     // ------ Errors ------
 
     error MustUseDynamicFee();
@@ -378,7 +381,7 @@ contract SimHook is AscntBaseHook {
         if (sqrtPriceX96 == 0) revert PoolNotInitialized();
         if (minMinFee > maxMinFee) revert MinFeeBounds();
         if (maxMinFee > maxFee) revert FeeBounds();
-        if (maxFee >= LPFeeLibrary.MAX_LP_FEE) revert FeeTooHigh();
+        if (maxFee > MAX_FEE) revert FeeTooHigh();
         if (timeDecayLength == 0) revert ZeroDecay();
         if (timeDecayLength > MAX_TIME_DECAY_LENGTH) revert DecayTooLong();
         if (jitLockBlocks > MAX_JIT_LOCK_BLOCKS) revert JitLockBlocksTooHigh();

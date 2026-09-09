@@ -32,6 +32,9 @@ contract TestUtils is Test, ArtifactDeployers {
     ///         so unit tests can call both fast-lane and slow-lane setters directly.
     AscntGovernance public governance;
 
+    /// @dev Mirrors `SimHook.MAX_FEE` (internal, not readable off-chain): the hook-wide `maxFee` ceiling.
+    uint24 internal constant HOOK_MAX_FEE = 500_000;
+
     /// @dev Lets `address(this)` satisfy `AscntGovernance`'s timelock duck-type check (the test
     ///      contract acts as the timelock). Non-zero delay = a "valid" timelock.
     function getMinDelay() external pure returns (uint256) {

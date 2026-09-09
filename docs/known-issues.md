@@ -57,7 +57,7 @@ so it reads the 100 % cap and `calculateDynamicFee` clamps to `maxFee` — while
 fee-reduced swap would have stayed inside liquidity with small genuine impact. Independent
 review measured an overquote of roughly **136×** at the cliff.
 
-The window's width scales with `maxFee`. `configurePool` rejects `maxFee = 100 %`, so the band is
+The window's width scales with `maxFee`. `configurePool` caps `maxFee` at 50 %, so the band is
 bounded — see the Scale section below.
 
 ### Why it is accepted
@@ -68,8 +68,8 @@ bounded — see the Scale section below.
    `maxFee`, pass 2 quotes low, pass 3 reinstates pass 1). Outside the window at high `maxFee` the
    iteration oscillates undamped (80→18→67→29→59…) and needs ~6–7 bisection simulations to
    converge. The cheap scheme — simulate twice, charge pass 2 — is accuracy-bounded at ≈ `(1−fee)`
-   of perfect and *degenerates* as `maxFee` approaches 100 %: pass 2 pushes almost no notional, reads
-   ~zero impact, and quotes `minFee`, turning a maximal overquote into a maximal underquote. So the fix doubles
+   of perfect and *degrades* as `maxFee` rises: at the 50 % ceiling pass 2 pushes only half the
+   notional, under-reads the impact, and quotes low, turning an overquote into an underquote. So the fix doubles
    simulation gas, adds exhaustion-detection and saturation edge cases, and still does not close
    the issue.
 2. **Nothing is extracted involuntarily.** The fee is quoted on the swapper's own order and
@@ -106,15 +106,14 @@ it by comparing the specified-side delta against `amountSpecified`.
 ### Scale
 
 The band spans `(capacity, capacity / (1 − maxFee))`, so its width scales with `maxFee`.
-`configurePool` rejects `maxFee = LPFeeLibrary.MAX_LP_FEE` (100 %), so the largest admissible cap
-is 999,999 pips and the band is **bounded** at `1e6 × capacity` — wide, but finite. At a 100 %
-ceiling it would have been unbounded.
+`configurePool` caps `maxFee` at 500,000 pips (50 %) hook-wide, so the band is **bounded** at
+`2 × capacity`. At a 100 % ceiling it would have been unbounded.
 
-That bound does not change the mitigation above. A quoted fee of 999,999 pips still surrenders all
-but ~one millionth of an exact-input order; what the bound removes is the exact-**output** revert
-v4-core raises at a 100 % override (`Pool.InvalidFeeForExactOut`), which is now unreachable. The
-quote is disclosed pre-signature, and a meaningful slippage bound turns the exact-input case into a
-revert rather than a payment.
+That bound does not change the mitigation above. A quoted fee of 500,000 pips still surrenders
+half of an exact-input order; what the cap also removes is the exact-**output** revert v4-core
+raises at a 100 % override (`Pool.InvalidFeeForExactOut`), which is unreachable. The quote is
+disclosed pre-signature, and a meaningful slippage bound turns the exact-input case into a revert
+rather than a payment.
 
 ---
 
@@ -140,7 +139,7 @@ never zero, so every step of the walk consumes input rather than free-running.
 Accepted because vanilla v4 walks the same ticks for the same order, and the simulator's *marginal*
 overhead per crossing is well under the headline ratio: `Pool.swap` re-reads the same slots warm
 (~100 gas vs ~2,100 cold). Steady-state overhead is ~1.5–1.8× vanilla per the repo's own snapshots
-(`snapshots/SwapGasComparison.json`: 84,162 vs 54,441 on the full path; per-crossing scaling in
+(`snapshots/SwapGasComparison.json`: 83,622 vs 54,441 on the full path; per-crossing scaling in
 `snapshots/SimHookOverheadByCrossings.json`). The cost is transient per transaction — no pool state
 is bricked — and is paid by the swapper who submitted the order. A saturation clamp on the walk was
 considered and rejected: added complexity with no beneficiary.
@@ -346,22 +345,18 @@ Clamping therefore has **two** thresholds, not one:
   heals (`p ≥ 2(C − maxFee)`) still escape.
 
 **Severity scales inversely with `maxFee`**, so the intended production setting matters more than
-any other input here. At the worst-case admissible setting — `configurePool` rejects 1,000,000
-exactly, so the ceiling is `MAX_LP_FEE - 1` (999,999 pips ≈ 100 %):
+any other input here. At the worst-case admissible setting — the hook-wide ceiling of 500,000 pips
+(50 %):
 
 | Threshold | Level of `C` | As cumulative impact |
 |---|---:|---:|
-| Imbalancing swaps start clamping | 500,000 | 50 % |
-| Dust heals start clamping | 1,000,000 | 100 % |
-| **All heals clamp — discount fully erased** | **2,000,000** | **200 %** |
+| Imbalancing swaps start clamping | 250,000 | 25 % |
+| Dust heals start clamping | 500,000 | 50 % |
+| **All heals clamp — discount fully erased** | **1,000,000** | **100 %** |
 
-Thresholds are shown at the 1e6 idealisation; at the admissible 999,999 ceiling each is lower by
-one part in a million, which changes nothing below.
-
-Note `C` is not bounded at 1,000,000. `calculatePriceImpactCapped` caps each *swap* at 100 %, but
-`_afterSwap` accumulates, so reaching the 2,000,000 threshold means stacking at least two
-full-impact same-direction swaps faster than decay removes them. That is a materially higher bar
-than at a low `maxFee`.
+`calculatePriceImpactCapped` caps each *swap* at 100 %, so a single full-impact swap reaches the
+1,000,000 threshold; `_afterSwap` accumulates, so a run of smaller same-direction swaps faster than
+decay removes them does too. That is still a materially higher bar than at a low `maxFee`.
 
 ### Why it matters, and the two things that limit it
 
@@ -373,37 +368,36 @@ as the only route back to informative pricing.
 Two things bound it. First, a stabilising feedback: a pool stuck at `maxFee` deters trading, and
 less trading means more idle time, which under KI-7's per-swap decay means *faster* relaxation —
 the state partly cures itself by suppressing the activity that sustains it. Second, at a high
-`maxFee` the raw fee is already prohibitive well before the clamp binds. At `C = 500,000` with
-`maxFee` at its ceiling, imbalancing flow pays ≈100 % and a dust heal ≈50 %: the directional ordering
-is still intact, but no one is trading at either price. The discount vanishing at `C = 2,000,000`
-is therefore a refinement of an already-unusable state, not the thing that breaks it.
+`maxFee` the raw fee is already prohibitive well before the clamp binds. At `C = 250,000` with
+`maxFee` at its ceiling, imbalancing flow pays 50 % and a dust heal 25 %: the directional ordering
+is still intact, but ordinary flow is not trading at either price. The discount vanishing at
+`C = 1,000,000` is therefore a refinement of an already-unusable state, not the thing that breaks it.
 
 The same bound applies to dominant-LP recapture (KI-6). Extraction needs organic flow willing to
-keep paying the clamped fee; at a near-100 % cap essentially none is, so there is little to
+keep paying the clamped fee; at the 50 % cap very little is, so there is little to
 recapture. Recapture is largest at *low* `maxFee` settings, where the threshold is proportionally
 lower and the cap is small enough that ordinary traders keep transacting through it.
 
 ### Choosing `maxFee` — the side effects, in both directions
 
-`maxFee` is a per-pool choice, admissible anywhere *below* `MAX_LP_FEE` (100 %) — `configurePool`
-rejects the 1e6 endpoint itself, so the practical ceiling is 999,999 pips. That optionality is
+`maxFee` is a per-pool choice, admissible anywhere up to the hook-wide ceiling of 500,000 pips
+(50 %) — `configurePool` rejects anything above it. That optionality is
 deliberate, but the parameter scales several accepted behaviours at once, and it does so in
 *opposite* directions — there is no setting that minimises everything. Deployers should pick with
 the whole table in view rather than optimising one row.
 
 | Raising `maxFee` | Lowering `maxFee` |
 |---|---|
-| **Widens** the KI-1 over-quoted exact-input band `(capacity, capacity/(1 − maxFee))`, widest at the 999,999 ceiling where it reaches `1e6 × capacity` | **Narrows** that band; it vanishes as `maxFee` → 0 |
+| **Widens** the KI-1 over-quoted exact-input band `(capacity, capacity/(1 − maxFee))`, widest at the 500,000 ceiling where it reaches `2 × capacity` | **Narrows** that band; it vanishes as `maxFee` → 0 |
 | **Raises** the KI-11 thresholds, so the direction-agnostic clamp regime needs a larger standing imbalance to reach | **Lowers** them proportionally — the `k`/`c` discount stops being observable at smaller imbalances |
 | **Raises** the ceiling a KI-6 gap-saturated pool is pinned at, making that window more punitive while it lasts | **Caps** the damage of a saturated accumulator |
 | Makes the clamped regime largely academic: little organic flow transacts at a very high fee, so there is little to extract | Makes the clamped regime economically live: ordinary flow keeps paying, which is what dominant-LP recapture (KI-6) needs |
 
-Two consequences worth stating plainly. Near the ceiling the KI-1 band is at its widest
-(`1e6 × capacity`), but the
-KI-11 clamp regime requires ~200 % cumulative impact to reach and the pool is priced out of use
-long before that — so the practical exposure is KI-1. At a tight `maxFee` the reverse holds: KI-1
-is narrow, but KI-11's thresholds fall with it and the cap is low enough that real flow keeps
-transacting through the clamped regime.
+Two consequences worth stating plainly. At the ceiling the KI-1 band is at its widest
+(`2 × capacity`), but the KI-11 clamp regime requires 100 % cumulative impact to reach and the pool
+is priced out of use before that — so the practical exposure is KI-1. At a tight `maxFee` the
+reverse holds: KI-1 is narrow, but KI-11's thresholds fall with it and the cap is low enough that
+real flow keeps transacting through the clamped regime.
 
 Note also that `maxFee` is the ceiling on the **total** dynamic fee, before the protocol split.
 The protocol slice is a further `protocolFeeBps` (capped at 20 %) of whatever is charged, so LPs
@@ -518,7 +512,7 @@ that the LP fee has already grossed up.
 The divergence is bounded and self-neutralising in normal operation — on the order of 0.16 % of
 the fee at a 1 % realized `dynamicFee`. It scales with the realized fee rather than sitting only at
 the configuration boundary — roughly 1.6–3.2 % of the fee at a 10–20 % realized `dynamicFee`, and
-largest as `maxFee` approaches its 999,999 ceiling. It is a structural consequence of v4's hook-delta rules rather than a
+largest at the 500,000-pip `maxFee` ceiling. It is a structural consequence of v4's hook-delta rules rather than a
 choice this hook makes: taking the slice on the specified side is not available. Recorded because
 it is the most frequently re-derived observation across independent reviews, not because it poses
 a risk.

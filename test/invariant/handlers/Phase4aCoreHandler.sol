@@ -40,6 +40,7 @@ contract Phase4aCoreHandler is Test {
     using PoolIdLibrary for PoolKey;
 
     uint256 internal constant PIPS = 1e6;
+    uint24 internal constant HOOK_MAX_FEE = 500_000; // SimHook.MAX_FEE
 
     IPoolManager public immutable manager;
     PoolSwapTest public immutable swapRouter;
@@ -121,7 +122,7 @@ contract Phase4aCoreHandler is Test {
     }
 
     function swapB(uint256 amountSeed, bool zeroForOne, bool exactOut) external {
-        // B has maxFee=999_999 — exact-out inputs inflate ~1e6x worst-case, so keep output small.
+        // B sits at the hook's maxFee cap — exact-out inputs inflate up to 2x, so keep output small.
         uint256 amount = exactOut ? _bound(amountSeed, 1e3, 1e9) : _bound(amountSeed, 1e4, 1e11);
         _swapChecked(keyB, idB, idA, zeroForOne, exactOut, amount);
     }
@@ -308,10 +309,10 @@ contract Phase4aCoreHandler is Test {
         P4Ev.FeeTakenEv[] memory takes = P4Ev.feeTakes(logs);
         uint24 dynFee = bevs[0].dynFee;
         assertLe(dynFee, c.maxFee, "dynamic fee above configured maxFee");
-        assertLe(c.maxFee, PIPS, "maxFee above MAX_LP_FEE");
+        assertLe(c.maxFee, HOOK_MAX_FEE, "maxFee above the hook cap");
 
         uint256 hookFee = (uint256(dynFee) * uint256(c.bps)) / 10_000;
-        assertLe(hookFee, 200_000, "hookFee rate above the 20% x 100% ceiling");
+        assertLe(hookFee, 100_000, "hookFee rate above the 20% x 50% ceiling");
 
         bool exactInput = !exactOut;
         bool unspecIs0 = (exactInput != zeroForOne);
